@@ -39,16 +39,36 @@ export function Browse() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    let attempts = 0;
     setLoading(true);
     setError('');
-    load(null)
-      .then((snap) => {
-        const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
-        setGigs(items);
-        setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
-      })
-      .catch(() => setError(t('common.error')))
-      .finally(() => setLoading(false));
+    const tryLoad = () => {
+      load(null)
+        .then((snap) => {
+          if (cancelled) return;
+          const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+          setGigs(items);
+          setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+          setLoading(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // Transient failures (e.g. a Firestore index still building) get a
+          // few silent retries before we give up.
+          attempts += 1;
+          if (attempts < 6) {
+            setTimeout(tryLoad, 4000);
+          } else {
+            setError(t('common.error'));
+            setLoading(false);
+          }
+        });
+    };
+    tryLoad();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
