@@ -55,22 +55,21 @@ are a toggle in Settings. **Every user-facing string lives in
 Auto-hide: the 3rd report flips the gig to `hidden`; admin reviews (approve/remove)
 in the queue. Removal frees the poster's rate-limit slot.
 
-## Firebase setup (one-time, manual — CLI can't do these)
+## Firebase setup
 
-The project `khadma-oran` already exists, Firestore is created (europe-west3),
-and Hosting/rules/indexes are deployed. Still needed in the
-[Firebase console](https://console.firebase.google.com/project/khadma-oran):
+The project `khadma-oran` is fully configured:
 
-1. **Upgrade to Blaze (pay-as-you-go)** — Phone Auth verification requires it
-   (Spark doesn't allow Phone Auth at all). With no other usage it stays free;
-   each real Algerian SMS costs a few cents (US/CA/IN test numbers are free).
-2. **Authentication → Sign-in method → Phone**: enable it.
-3. **Authentication → Sign-in method → Email/Password**: enable it (admin login).
-4. **Authentication → Users → Add user**: create `cherouri@gmail.com` with a
-   password (this is the admin).
-5. **Authentication → Sign-in method → Phone → Phone numbers for testing**:
-   add a test number + code (e.g. `+1 555 555 5555` / `123456`) to run the
-   walkthrough without a real SIM.
+- **Blaze (pay-as-you-go)** — required for Phone Auth (Spark doesn't allow it).
+  With no other usage it stays free; each real Algerian SMS costs a few cents
+  (test numbers are free).
+- **Sign-in methods**: Phone ✓, Email/Password ✓, Anonymous ✓ (reporters).
+- **Admin account**: `cherouri@gmail.com` (email/password) — change the
+  password in Authentication → Users if you haven't already.
+- **Phone numbers for testing** (Authentication → Sign-in method → Phone):
+  - `+1 555-555-0100` → code `123456`
+  - `+213 555-010-000` → code `654321`
+- **Sample gigs**: 10 Darija sample gigs are seeded (remove in one tap from the
+  admin queue; re-add with the admin "Add sample gigs" button).
 
 ## Local dev
 
@@ -81,7 +80,7 @@ npm run dev
 ```
 
 OTP flow needs the reCAPTCHA to load; use Chrome. Test numbers work against the
-real project once added in the console (step 5 above).
+real project.
 
 ## Deploy
 
