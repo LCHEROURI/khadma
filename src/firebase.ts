@@ -2,10 +2,10 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache } from 'firebase/firestore';
 
-// Public web SDK config (no secrets — safe to commit).
-// From: firebase apps:sdkconfig web 1:1000158969612:web:1e92c73336c232a8d25329 --project khadma-oran
+// Web SDK config. The API key lives in .env (gitignored, loaded at build time)
+// — see .env.example. Everything else is public project metadata.
 const firebaseConfig = {
-  apiKey: 'AIzaSyB2XVuo1NkrGyD77fiK11FzjVGwC0f7VpQ',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: 'khadma-oran.firebaseapp.com',
   projectId: 'khadma-oran',
   storageBucket: 'khadma-oran.firebasestorage.app',

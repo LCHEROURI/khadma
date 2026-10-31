@@ -75,6 +75,7 @@ and Hosting/rules/indexes are deployed. Still needed in the
 ## Local dev
 
 ```bash
+cp .env.example .env   # then fill in the Firebase API key (required for builds)
 npm install
 npm run dev
 ```
