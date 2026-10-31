@@ -4,7 +4,7 @@ Darija-first, completely free gig board for youth in **Oran, Algeria** (pilot ci
 Mobile-first installable PWA that works on low-end Android and tolerates offline
 reading (Firestore local cache + precached shell).
 
-**Live:** https://khadma-oran.web.app · **Repo:** https://github.com/LCHEROURI/khadma-app
+**Live:** https://khadma-oran.web.app · **Repo:** https://github.com/LCHEROURI/khadma
 
 ## Features (V1)
 
