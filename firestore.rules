@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.email == 'cherouri@gmail.com';
+    }
+
+    function isPhoneUser() {
+      return signedIn() && request.auth.token.phone_number != null;
+    }
+
+    function validGigFields() {
+      return request.resource.data.title is string
+        && request.resource.data.title.size() >= 3
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 2000
+        && request.resource.data.category in
+          ['construction', 'delivery', 'cleaning', 'tutoring', 'restaurant', 'events', 'digital']
+        && request.resource.data.neighborhood in
+          ['Bir El Djir', 'Es Sénia', 'Canastel', 'Maraval', 'Gambetta',
+           'El Hamri', 'Ain El Turk', 'Wahran El Jadida']
+        && request.resource.data.payMin is int
+        && request.resource.data.payMin >= 0
+        && request.resource.data.payMin <= 100000000
+        && request.resource.data.payMax is int
+        && request.resource.data.payMax >= request.resource.data.payMin
+        && request.resource.data.createdAt == request.time;
+    }
+
+    match /gigs/{gigId} {
+      // Browsing is public. Raw phone numbers live in posterPhone but are
+      // never rendered by the client; contact goes through wa.me only.
+      allow read: if true;
+
+      // Real posts: poster must be phone-verified (SMS OTP) and the
+      // WhatsApp/contact number MUST be the verified number. The 5-active-gig
+      // cap is enforced via the poster's own monotonic phoneCounters doc,
+      // which only they can create/increment (+1 only).
+      allow create: if isPhoneUser()
+          && request.auth.token.phone_number == request.resource.data.posterPhone
+          && request.auth.token.phone_number == request.resource.data.counterId
+          && request.resource.data.status == 'active'
+          && request.resource.data.flags == 0
+          && request.resource.data.verified == true
+          && request.resource.data.isSample == false
+          && getAfter(/databases/$(database)/documents/phoneCounters/$(request.auth.token.phone_number)).data.count >= 1
+          && getAfter(/databases/$(database)/documents/phoneCounters/$(request.auth.token.phone_number)).data.count <= 5
+          && validGigFields()
+        // Admin may seed the board with clearly-marked sample gigs (no phone).
+        || (isAdmin()
+          && request.resource.data.isSample == true
+          && request.resource.data.verified == false
+          && request.resource.data.posterPhone == 'sample'
+          && request.resource.data.counterId == 'sample'
+          && request.resource.data.status == 'active'
+          && request.resource.data.flags == 0
+          && validGigFields());
+
+      // Reports: any signed-in user (anonymous allowed) adds exactly one flag;
+      // the 3rd flag auto-hides the gig (status 'hidden', pending review).
+      // Admin can do anything.
+      allow update: if isAdmin()
+        || (signedIn()
+            && resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['flags', 'status'])
+            && request.resource.data.flags == resource.data.flags + 1
+            && request.resource.data.flags <= 100
+            && ((request.resource.data.flags < 3 && request.resource.data.status == 'active')
+                || (request.resource.data.flags >= 3 && request.resource.data.status == 'hidden')));
+
+      allow delete: if isAdmin();
+    }
+
+    match /phoneCounters/{phone} {
+      // Monotonic per-phone counter. Only the verified owner can create (count
+      // 1) or increment (strictly +1); only admin can decrement/reset/delete.
+      allow create: if isPhoneUser()
+        && phone == request.auth.token.phone_number
+        && request.resource.data.count == 1;
+
+      allow update: if signedIn()
+        && ((phone == request.auth.token.phone_number
+             && request.resource.data.count == resource.data.count + 1)
+            || (isAdmin() && request.resource.data.count >= 0));
+
+      allow delete: if isAdmin();
+
+      allow read: if signedIn()
+        && (phone == request.auth.token.phone_number || isAdmin());
+    }
+
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.gigId is string
+        && request.resource.data.gigId.size() > 0
+        && request.resource.data.reason in ['scam', 'offensive', 'wrongInfo', 'spam', 'other']
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+    }
+  }
+}
