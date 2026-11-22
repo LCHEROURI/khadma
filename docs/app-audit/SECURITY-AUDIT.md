@@ -28,7 +28,12 @@
 | Firestore Security Rules | `npm run test:rules` | **PASS** (`4 / 4`) | Active vs. hidden/removed reads; `gigContacts` admin-only; `contactRateLimits` denied to all clients including admin; strict `+1` counter cap (`<= 5`); `posterPhone` blocked on public `gigs`; deterministic 1-report-per-UID + 3-report auto-hide; unverified vs. verified admin email |
 | Rules Dry-Run Compile | `firebase deploy --only firestore:rules --dry-run` | **PASS** | Compiled cleanly against `khadma-oran` |
 
-## Remaining Medium/Low Security Items (Deferred)
+## Medium-Priority Security Repair (`SEC-002` — FIXED & VERIFIED LOCALLY, PENDING DEPLOY)
 
-- `SEC-002` (Medium): Anonymous Auth Sybil risk on 3-report auto-hide.
-- `SEC-004` (Low): Live App Check activation in Firebase Console (code wired; console registration + `VITE_RECAPTCHA_SITE_KEY` secret required before deploy).
+- **Mitigation:** Replaced direct client Firestore gig flagging / report creation with 2nd Gen Callable Function `reportGigListing` (`functions/src/index.ts`, `functions/src/reportHandler.ts`) enforcing `enforceAppCheck: true`, Firebase Auth (`request.auth.uid`), per-UID dedup (`reports/{gigId}_{uid}`), **per-`(gigId, ipHash)` dedup** (blocks 3 fresh anonymous UIDs from the same IP from auto-hiding a listing), and a **10/hour per-IP** report cap in server-only `reportRateLimits`.
+- **Rules Hardening:** `/gigs/{gigId}` `update` restricted to `isAdmin()` only; `/reports/{reportId}` `create` set to `if false;` (server Admin SDK only); `/reportRateLimits/{limitId}` set to `allow read, write: if false;`.
+- **Evidence:** `npm run test:security` (`4/4` report Sybil tests PASS + `7/7` contact security tests PASS); `npm run test:rules` (`4/4` PASS); `firebase deploy --only firestore:rules --dry-run` PASS.
+
+## Remaining Low-Priority Security Item
+
+- **`SEC-004` (`OPEN — CODE IMPLEMENTED, PENDING CONSOLE ACTIVATION`):** Firebase App Check client (`ReCaptchaV3Provider` in `src/firebase.ts`) and server (`enforceAppCheck: true` on `getGigContactLink` & `reportGigListing`) are implemented, but cannot be marked closed until reCAPTCHA v3 is registered in Firebase Console and `VITE_RECAPTCHA_SITE_KEY` is configured for production builds.

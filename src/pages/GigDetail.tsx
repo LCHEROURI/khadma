@@ -84,7 +84,7 @@ export function GigDetail() {
           )}
         </div>
         <h1 className="detail-title">{gig.title}</h1>
-        <div className="detail-pay">{formatPay(gig.payMin, gig.payMax)}</div>
+        <div className="detail-pay">{formatPay(gig.payMin, gig.payMax, t('common.currency'))}</div>
         <p className="detail-desc">{gig.description}</p>
         <div className="detail-meta">{timeAgo(gig, t)}</div>
 

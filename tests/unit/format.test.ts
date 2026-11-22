@@ -3,10 +3,12 @@ import { errKey, formatNeighborhood, formatPay } from '../../src/lib/format';
 import { STRINGS, tpl } from '../../src/lib/strings';
 
 describe('formatPay', () => {
-  it('formats single value and ranges', () => {
+  it('formats single value and ranges with localized currency', () => {
     expect(formatPay(2000, 2000)).toContain('2');
     expect(formatPay(2000, 2000)).toContain('DZD');
     expect(formatPay(2000, 3500)).toContain('–');
+    expect(formatPay(2500, 2500, 'دج')).toContain('دج');
+    expect(formatPay(2500, 3500, 'دج')).toContain('دج');
   });
 });
 

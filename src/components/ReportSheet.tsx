@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../lib/i18n';
-import { reportGig } from '../lib/db';
+import { AlreadyReportedError, reportGig } from '../lib/db';
 import { REPORT_REASONS } from '../lib/constants';
 import type { ReportReason } from '../lib/types';
 
@@ -17,12 +17,28 @@ function getReported(): string[] {
 
 export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => void }) {
   const { t } = useLang();
+  const sheetRef = useRef<HTMLDivElement>(null);
   const [reason, setReason] = useState<ReportReason | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [already, setAlready] = useState(() => getReported().includes(gigId));
   const [err, setErr] = useState('');
 
-  const already = getReported().includes(gigId);
+  useEffect(() => {
+    sheetRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [busy, onClose]);
+
+  const markReportedLocally = () => {
+    const cur = getReported();
+    if (!cur.includes(gigId)) {
+      localStorage.setItem(REPORTED_KEY, JSON.stringify([...cur, gigId]));
+    }
+  };
 
   const submit = async () => {
     if (!reason) return;
@@ -30,10 +46,23 @@ export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => 
     setErr('');
     try {
       await reportGig(gigId, reason);
-      localStorage.setItem(REPORTED_KEY, JSON.stringify([...getReported(), gigId]));
+      markReportedLocally();
       setDone(true);
-    } catch {
-      setErr(t('common.error'));
+    } catch (e) {
+      if (e instanceof AlreadyReportedError) {
+        markReportedLocally();
+        setAlready(true);
+      } else {
+        const code = (e as { code?: string }).code ?? '';
+        if (code === 'functions/already-exists') {
+          markReportedLocally();
+          setAlready(true);
+        } else if (code === 'functions/resource-exhausted') {
+          setErr(t('contact.rateLimit'));
+        } else {
+          setErr(t('common.error'));
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -41,8 +70,16 @@ export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => 
 
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <h2 className="sheet-title">{t('report.title')}</h2>
+      <div
+        ref={sheetRef}
+        tabIndex={-1}
+        className="sheet"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-sheet-title"
+      >
+        <h2 id="report-sheet-title" className="sheet-title">{t('report.title')}</h2>
         {done ? (
           <div className="sheet-done">
             <div className="done-check">

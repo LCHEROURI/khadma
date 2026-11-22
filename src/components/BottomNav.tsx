@@ -12,7 +12,7 @@ const ITEMS = [
 export function BottomNav() {
   const { t } = useLang();
   return (
-    <nav className="bottom-nav">
+    <nav className="bottom-nav" aria-label={t('nav.label')}>
       {ITEMS.map((item) => (
         <NavLink
           key={item.to}

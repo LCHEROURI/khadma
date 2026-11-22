@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
@@ -8,6 +7,7 @@ import { CATEGORIES, MAX_ACTIVE_GIGS, MAX_PAY_DZD, MIN_TITLE_LENGTH, NEIGHBORHOO
 import { getRemainingForPhone, postGig, RateLimitError } from '../lib/db';
 import { errKey, formatNeighborhood } from '../lib/format';
 import { normalizeDzPhone } from '../lib/phone';
+import { createFirebaseSmsAdapter, type PhoneVerificationAdapter } from '../lib/phoneAuth';
 import type { Category } from '../lib/types';
 import { Banner } from '../components/Banner';
 
@@ -18,13 +18,12 @@ export function PostGig() {
   const navigate = useNavigate();
   const { phoneNumber: authPhone, loading: authLoading } = useAuth();
   const recapRef = useRef<HTMLDivElement>(null);
-  const [recap, setRecap] = useState<RecaptchaVerifier | null>(null);
+  const verifierRef = useRef<PhoneVerificationAdapter | null>(null);
 
   const [step, setStep] = useState<Step>(authPhone ? 'form' : 'verify');
   const [phoneInput, setPhoneInput] = useState('');
   const [phone, setPhone] = useState(authPhone ?? '');
   const [code, setCode] = useState('');
-  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -38,25 +37,19 @@ export function PostGig() {
   const [remaining, setRemaining] = useState<number | null>(null);
 
   useEffect(() => {
+    verifierRef.current = createFirebaseSmsAdapter(auth);
+    return () => {
+      verifierRef.current?.dispose();
+      verifierRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     if (authPhone) {
       setPhone(authPhone);
       setStep('form');
     }
   }, [authPhone]);
-
-  useEffect(() => {
-    if (recapRef.current && !recap) {
-      try {
-        const r = new RecaptchaVerifier(auth, recapRef.current, {
-          size: 'invisible',
-          callback: () => {}
-        });
-        setRecap(r);
-      } catch {
-        // recaptcha already rendered — ignore
-      }
-    }
-  }, [recap]);
 
   useEffect(() => {
     if (phone) {
@@ -67,21 +60,20 @@ export function PostGig() {
   }, [phone]);
 
   const sendCode = async () => {
-    const normalized = normalizeDzPhone(phoneInput);
+    const normalized = normalizeDzPhone(phoneInput || phone);
     if (!normalized) {
       setErr(t('post.phoneInvalid'));
       return;
     }
-    if (!recap) {
+    if (!recapRef.current || !verifierRef.current) {
       setErr(t('auth.recaptchaError'));
       return;
     }
     setBusy(true);
     setErr('');
     try {
-      const c = await signInWithPhoneNumber(auth, normalized, recap);
+      await verifierRef.current.sendCode(normalized, recapRef.current);
       setPhone(normalized);
-      setConfirmation(c);
       setStep('code');
     } catch (e) {
       const code = (e as { code?: string }).code ?? '';
@@ -92,11 +84,11 @@ export function PostGig() {
   };
 
   const confirmCode = async () => {
-    if (!confirmation || code.trim().length < 4) return;
+    if (!verifierRef.current?.hasPendingConfirmation() || code.trim().length < 4) return;
     setBusy(true);
     setErr('');
     try {
-      await confirmation.confirm(code.trim());
+      await verifierRef.current.confirmCode(code.trim());
       setStep('form');
     } catch (e) {
       const c = (e as { code?: string }).code ?? '';
@@ -146,11 +138,12 @@ export function PostGig() {
   };
 
   const changeNumber = async () => {
+    verifierRef.current?.reset();
     await auth.signOut();
-    setConfirmation(null);
     setPhoneInput('');
     setPhone('');
     setCode('');
+    setErr('');
     setStep('verify');
   };
 
@@ -205,7 +198,7 @@ export function PostGig() {
             {busy ? t('common.loading') : t('post.confirm')}
           </button>
           <div className="sheet-actions">
-            <button className="btn btn-ghost" onClick={sendCode} disabled={busy || !confirmation}>
+            <button className="btn btn-ghost" onClick={sendCode} disabled={busy || !phone}>
               {t('post.resend')}
             </button>
             <button className="btn btn-ghost" onClick={changeNumber} disabled={busy}>
@@ -255,7 +248,7 @@ export function PostGig() {
               <div className="pay-inputs">
                 <input type="number" inputMode="numeric" min={0} placeholder={t('post.payMin')} value={payMin} onChange={(e) => setPayMin(e.target.value)} />
                 <input type="number" inputMode="numeric" min={0} placeholder={t('post.payMax')} value={payMax} onChange={(e) => setPayMax(e.target.value)} />
-                <span className="pay-suffix">DZD</span>
+                <span className="pay-suffix">{t('common.currency')}</span>
               </div>
             </label>
           </div>

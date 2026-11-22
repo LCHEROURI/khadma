@@ -6,7 +6,20 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, runTransaction, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
+} from 'firebase/firestore';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 
 const PROJECT_ID = 'demo-khadma';
@@ -145,74 +158,35 @@ describe('KHADMA Firestore Security Rules', () => {
     );
   });
 
-  it('enforces one report per UID, requires report doc, and auto-hides on 3rd report', async () => {
+  it('denies direct client gig flagging and report creation (enforcing reportGigListing callable)', async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'gigs', 'gig_r'), makeGigPayload('u1'));
     });
 
     const r1 = testEnv.authenticatedContext('anon-1').firestore();
-    const r2 = testEnv.authenticatedContext('anon-2').firestore();
-    const r3 = testEnv.authenticatedContext('anon-3').firestore();
 
-    // Attack: increment flags directly without creating report doc -> MUST DENY
+    // Direct client flag update MUST be denied (must go through App-Check + IP-limited callable)
     await assertFails(updateDoc(doc(r1, 'gigs', 'gig_r'), { flags: 1, status: 'active' }));
 
-    // Valid report #1
-    await assertSucceeds(
-      runTransaction(r1, async (tx) => {
-        tx.set(doc(r1, 'reports', 'gig_r_anon-1'), {
-          gigId: 'gig_r',
-          reason: 'scam',
-          reporterId: 'anon-1',
-          createdAt: serverTimestamp()
-        });
-        tx.update(doc(r1, 'gigs', 'gig_r'), { flags: 1, status: 'active' });
-      })
-    );
-
-    // Duplicate report by same UID -> MUST DENY
+    // Direct client report creation MUST be denied
     await assertFails(
-      runTransaction(r1, async (tx) => {
-        tx.set(doc(r1, 'reports', 'gig_r_anon-1'), {
-          gigId: 'gig_r',
-          reason: 'spam',
-          reporterId: 'anon-1',
-          createdAt: serverTimestamp()
-        });
-        tx.update(doc(r1, 'gigs', 'gig_r'), { flags: 2, status: 'active' });
+      setDoc(doc(r1, 'reports', 'gig_r_anon-1'), {
+        gigId: 'gig_r',
+        reason: 'scam',
+        reporterId: 'anon-1',
+        createdAt: serverTimestamp()
       })
     );
 
-    // Report #2 and #3 (auto-hides)
-    await assertSucceeds(
-      runTransaction(r2, async (tx) => {
-        tx.set(doc(r2, 'reports', 'gig_r_anon-2'), {
-          gigId: 'gig_r',
-          reason: 'spam',
-          reporterId: 'anon-2',
-          createdAt: serverTimestamp()
-        });
-        tx.update(doc(r2, 'gigs', 'gig_r'), { flags: 2, status: 'active' });
-      })
-    );
-
-    await assertSucceeds(
-      runTransaction(r3, async (tx) => {
-        tx.set(doc(r3, 'reports', 'gig_r_anon-3'), {
-          gigId: 'gig_r',
-          reason: 'scam',
-          reporterId: 'anon-3',
-          createdAt: serverTimestamp()
-        });
-        tx.update(doc(r3, 'gigs', 'gig_r'), { flags: 3, status: 'hidden' });
-      })
-    );
+    // Server-only reportRateLimits MUST be denied to clients
+    await assertFails(getDoc(doc(r1, 'reportRateLimits', 'ip_test')));
+    await assertFails(setDoc(doc(r1, 'reportRateLimits', 'ip_test'), { gigIds: [], windowStartMs: 0 }));
   });
 
-  it('denies unverified admin email and allows verified admin email', async () => {
+  it('denies unverified admin email and allows verified admin email + flagged queue query (DB-001)', async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       const db = ctx.firestore();
-      await setDoc(doc(db, 'gigs', 'g1'), { ...makeGigPayload('u1'), status: 'hidden' });
+      await setDoc(doc(db, 'gigs', 'g1'), { ...makeGigPayload('u1'), status: 'hidden', flags: 3 });
       await setDoc(doc(db, 'gigContacts', 'g1'), {
         posterPhone: PHONE,
         counterId: PHONE,
@@ -232,6 +206,17 @@ describe('KHADMA Firestore Security Rules', () => {
       .firestore();
     await assertSucceeds(getDoc(doc(verifiedAdmin, 'gigs', 'g1')));
     await assertSucceeds(getDoc(doc(verifiedAdmin, 'gigContacts', 'g1')));
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(verifiedAdmin, 'gigs'),
+          where('flags', '>', 0),
+          orderBy('flags', 'asc'),
+          orderBy('createdAt', 'desc'),
+          limit(50)
+        )
+      )
+    );
     await assertSucceeds(updateDoc(doc(verifiedAdmin, 'gigs', 'g1'), { status: 'active', flags: 0 }));
 
     // Server-only contactRateLimits must be denied to all clients (including admin)

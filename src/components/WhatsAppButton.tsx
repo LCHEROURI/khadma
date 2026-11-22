@@ -3,6 +3,12 @@ import { useLang } from '../lib/i18n';
 import { requestGigContactLink } from '../lib/db';
 import { Icon } from './Icon';
 
+function isCoarsePointer(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(pointer: coarse)').matches
+    : false;
+}
+
 export function WhatsAppButton({ gigId }: { gigId: string }) {
   const { t, lang } = useLang();
   const [busy, setBusy] = useState(false);
@@ -12,14 +18,27 @@ export function WhatsAppButton({ gigId }: { gigId: string }) {
     if (busy) return;
     setBusy(true);
     setErr('');
+
+    // On desktop browsers, open a blank tab synchronously during user gesture (without
+    // noopener in features so we retain a handle to detect popup blocking and avoid
+    // desktop Safari double-navigation), then immediately null out opener.
+    const mobile = isCoarsePointer();
+    const popup = mobile ? null : window.open('', '_blank');
+    if (popup) {
+      popup.opener = null;
+    }
+
     try {
       const waUrl = await requestGigContactLink(gigId, lang);
-      const opened = window.open(waUrl, '_blank', 'noopener,noreferrer');
-      if (!opened) {
-        // Mobile Safari/Chrome fallback when async window.open is blocked.
+      if (popup && !popup.closed) {
+        popup.location.replace(waUrl);
+      } else {
         window.location.assign(waUrl);
       }
     } catch (e) {
+      if (popup && !popup.closed) {
+        popup.close();
+      }
       const code = (e as { code?: string }).code ?? '';
       if (code === 'functions/resource-exhausted') {
         setErr(t('contact.rateLimit'));

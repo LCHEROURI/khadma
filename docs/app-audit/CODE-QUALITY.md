@@ -1,17 +1,10 @@
-# Stage 02 — Code Quality Audit (Updated After High-Priority Repairs)
+# Stage 02 — Code Quality Audit (Updated After Medium-Priority Repairs)
 
-## Command Execution Matrix (Verified on Local APFS `/tmp/khadma-verify`)
+## Repaired Findings
 
-| Check | Command | Exit Code | Status | Notes |
-|---|---|---|---|---|
-| Web TypeScript check | `npm run typecheck` (`tsc --noEmit`) | `0` | PASS | 0 errors across `src/` |
-| Web Production build | `npm run build` (`tsc && vite build`) | `0` | PASS | Built in 783ms; `dist/sw.js` + 18 precache entries (831.42 KiB) |
-| Cloud Functions build | `cd functions && npm run build` | `0` | PASS | 0 errors across `functions/src/index.ts` |
-| Unit tests | `npm run test:unit` | `0` | PASS | 2 files, 8/8 tests passed (192ms) |
-| Linter | *(not configured)* | — | NOT VERIFIED | Deferred (`QUAL-002`, Medium) |
+- **`QUAL-001` (`FIXED & VERIFIED`):** Build & typecheck verified on local APFS `/tmp/khadma-verify` and GitHub Actions CI (`45078964237`).
+- **`QUAL-002` (`FIXED & VERIFIED`):** Added ESLint 9 flat config (`eslint.config.js`) with `@eslint/js`, `typescript-eslint`, and `eslint-plugin-react-hooks`, wired into `npm run lint` and `.github/workflows/ci.yml`. Removed unused `eslint-disable` comment in `src/pages/Saved.tsx` (`0` errors, `0` warnings).
 
-## Local Environment Root Cause (`QUAL-001`)
+## Remaining Low-Priority Finding (Deferred)
 
-- Local builds inside `/Users/laredjchehrouri/Documents/Khadma-app` stalled because macOS iCloud Drive syncs `Documents/` and evicts `node_modules/` files.
-- Syncing the workspace (excluding `node_modules/`) to local non-iCloud storage (`/tmp/khadma-verify`) resolved the I/O stall completely (`783ms` build).
-- **Recommendation:** Move the local repo out of iCloud-synced `Documents/` (e.g., `~/dev/Khadma-app`) or exclude `node_modules` from iCloud sync.
+- **`QUAL-003` (Low):** Duplicated `localStorage` JSON string-array parsing between `ReportSheet.tsx` and `db.ts`; `BROWSE_LIMIT` naming drift.

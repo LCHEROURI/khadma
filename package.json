@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "lint": "eslint src functions/src tests",
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -21,13 +22,17 @@
     "react-router-dom": "^6.30.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.25.1",
     "@firebase/rules-unit-testing": "^4.0.1",
     "@playwright/test": "^1.52.0",
     "@types/react": "^18.3.20",
     "@types/react-dom": "^18.3.6",
     "@vite-pwa/assets-generator": "^0.2.6",
     "@vitejs/plugin-react": "^4.5.0",
+    "eslint": "^9.25.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "typescript": "^5.8.3",
+    "typescript-eslint": "^8.31.0",
     "vite": "^6.3.5",
     "vite-plugin-pwa": "^0.21.2",
     "vitest": "^3.1.4"

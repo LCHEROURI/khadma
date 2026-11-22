@@ -222,7 +222,7 @@ export function Admin() {
             {t('admin.seed')}
           </button>
         )}
-        <button className="btn btn-ghost" onClick={refresh}>
+        <button className="btn btn-ghost" onClick={refresh} aria-label={t('common.refresh')}>
           <Icon name="refresh" size={16} />
         </button>
       </div>
@@ -247,7 +247,7 @@ export function Admin() {
                 <div className="admin-row-meta">
                   <span className="chip">{t(`categories.${g.category}`)}</span>
                   <span className="chip chip-neigh">{formatNeighborhood(g.neighborhood, t)}</span>
-                  <span>{formatPay(g.payMin, g.payMax)}</span>
+                  <span>{formatPay(g.payMin, g.payMax, t('common.currency'))}</span>
                   <span className="status-chip">{t(`admin.status.${g.status}`)}</span>
                   {g.flags > 0 && <span className="flag-chip">🚩 {t('admin.flags', { n: g.flags })}</span>}
                 </div>

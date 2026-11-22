@@ -14,7 +14,7 @@ rules_version = '2';
 //   - payMax: int (required, payMin..100000000)
 //   - neighborhood: string (required, enum of 8 Oran neighborhoods)
 //   - posterUid: string (required, == request.auth.uid or 'sample' for admin, immutable)
-//   - flags: int (required, 0 on create, incremented +1 on report up to 100)
+//   - flags: int (required, 0 on create, incremented +1 server-side via reportGigListing)
 //   - status: string (required, 'active' | 'hidden' | 'removed')
 //   - verified: bool (required, true for phone posters, false for admin samples)
 //   - isSample: bool (required, false for phone posters, true for admin samples)
@@ -33,16 +33,23 @@ rules_version = '2';
 // Fields:
 //   - count: int (required, 1 on create, monotonic +1 up to 5 for owner; 0..5 for admin)
 //
-// Collection: reports
+// Collection: reports (server-created via reportGigListing Admin SDK; admin-only read/update/delete)
 // Document ID: {gigId}_{reporterUid} (deterministic, one report per user per gig)
 // Fields:
 //   - gigId: string (required, 1..128 chars)
 //   - reason: string (required, enum of 5 report reasons)
-//   - reporterId: string (required, == request.auth.uid)
-//   - createdAt: timestamp (required, == request.time on create)
+//   - reporterId: string (required, reporter auth UID)
+//   - createdAt: timestamp (required, server timestamp)
 //
 // Collection: contactRateLimits (server-only — Admin SDK exclusively; all client access denied)
 // Document ID: {limitId} (rate-limit bucket key)
+// Fields:
+//   - gigIds: list<string>
+//   - windowStartMs: int
+//   - updatedAtMs: int
+//
+// Collection: reportRateLimits (server-only — Admin SDK exclusively; all client access denied)
+// Document ID: {limitId} (IP rate-limit bucket key, e.g. ip_{hash})
 // Fields:
 //   - gigIds: list<string>
 //   - windowStartMs: int
@@ -114,20 +121,6 @@ service cloud.firestore {
             && getAfter(counterPath).data.count <= 5);
     }
 
-    function isValidReportGigUpdate(gigId) {
-      let reportPath = /databases/$(database)/documents/reports/$(gigId + '_' + request.auth.uid);
-      return signedIn()
-        && resource.data.status == 'active'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['flags', 'status'])
-        && request.resource.data.flags is int
-        && request.resource.data.flags == resource.data.flags + 1
-        && request.resource.data.flags <= 100
-        && ((request.resource.data.flags < 3 && request.resource.data.status == 'active')
-            || (request.resource.data.flags >= 3 && request.resource.data.status == 'hidden'))
-        && !exists(reportPath)
-        && existsAfter(reportPath);
-    }
-
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -158,10 +151,10 @@ service cloud.firestore {
           && request.resource.data.flags == 0
           && validGigFields());
 
-      // Reports: any signed-in user (anonymous allowed) adds exactly one flag
-      // paired with a deterministic reports/{gigId}_{uid} document; the 3rd flag
-      // auto-hides the gig (status 'hidden', pending review). Admin can moderate.
-      allow update: if isAdmin() || isValidReportGigUpdate(gigId);
+      // Client updates are restricted to admin moderation only.
+      // Reporting/flagging is handled exclusively server-side by the App-Check +
+      // IP-rate-limited `reportGigListing` Cloud Function (Admin SDK).
+      allow update: if isAdmin();
 
       allow delete: if isAdmin();
     }
@@ -208,23 +201,20 @@ service cloud.firestore {
     }
 
     match /reports/{reportId} {
-      allow read: if isAdmin();
+      // Reports are created exclusively by the `reportGigListing` Cloud Function
+      // via Admin SDK (enforcing App Check and IP Sybil rate limits).
+      allow create: if false;
 
-      allow create: if signedIn()
-        && reportId == request.resource.data.gigId + '_' + request.auth.uid
-        && request.resource.data.keys().hasOnly(['gigId', 'reason', 'reporterId', 'createdAt'])
-        && request.resource.data.gigId is string
-        && request.resource.data.gigId.size() > 0
-        && request.resource.data.gigId.size() <= 128
-        && request.resource.data.reason in ['scam', 'offensive', 'wrongInfo', 'spam', 'other']
-        && request.resource.data.reporterId == request.auth.uid
-        && request.resource.data.createdAt == request.time;
-
-      allow update, delete: if isAdmin();
+      allow read, update, delete: if isAdmin();
     }
 
     match /contactRateLimits/{limitId} {
       // Server-only rate-limiting buckets managed exclusively by Cloud Functions Admin SDK.
+      allow read, write: if false;
+    }
+
+    match /reportRateLimits/{limitId} {
+      // Server-only IP report rate-limiting buckets managed exclusively by Cloud Functions Admin SDK.
       allow read, write: if false;
     }
   }

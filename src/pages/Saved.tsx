@@ -18,7 +18,6 @@ export function Saved() {
     const h = () => load();
     window.addEventListener('focus', h);
     return () => window.removeEventListener('focus', h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

@@ -3,10 +3,10 @@ import { NEIGHBORHOOD_KEYS } from './constants';
 
 const nf = new Intl.NumberFormat('fr-FR');
 
-export function formatPay(min: number, max: number): string {
+export function formatPay(min: number, max: number, currency = 'DZD'): string {
   const lo = nf.format(min);
-  if (min === max) return `${lo} DZD`;
-  return `${lo}–${nf.format(max)} DZD`;
+  if (min === max) return `${lo} ${currency}`;
+  return `${lo}–${nf.format(max)} ${currency}`;
 }
 
 export function formatNeighborhood(

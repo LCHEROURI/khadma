@@ -8,10 +8,9 @@ import {
   query,
   runTransaction,
   serverTimestamp,
-  setDoc,
   startAfter,
-  updateDoc,
   where,
+  writeBatch,
   type DocumentData,
   type QueryDocumentSnapshot
 } from 'firebase/firestore';
@@ -19,12 +18,18 @@ import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../firebase';
 import type { Gig, GigStatus, ReportReason } from './types';
-import { BROWSE_LIMIT, HIDE_AFTER_REPORTS, MAX_ACTIVE_GIGS } from './constants';
+import { BROWSE_LIMIT, MAX_ACTIVE_GIGS } from './constants';
 import { SAMPLE_GIGS } from './samples';
 
 export class RateLimitError extends Error {
   constructor() {
     super('RATE_LIMIT');
+  }
+}
+
+export class AlreadyReportedError extends Error {
+  constructor() {
+    super('ALREADY_REPORTED');
   }
 }
 
@@ -144,7 +149,7 @@ export async function requestGigContactLink(gigId: string, lang: string): Promis
   return res.data.waUrl;
 }
 
-// ---------- Report ----------
+// ---------- Report (App Check + Auth + IP-Sybil Protection) ----------
 
 export async function reportGig(gigId: string, reason: ReportReason): Promise<void> {
   if (!auth.currentUser) {
@@ -154,29 +159,21 @@ export async function reportGig(gigId: string, reason: ReportReason): Promise<vo
       // Anon sign-in failed (network?) — caller shows generic error.
     }
   }
-  const user = auth.currentUser;
-  if (!user) throw new Error('NO_AUTH');
+  if (!auth.currentUser) throw new Error('NO_AUTH');
 
-  const gigRef = doc(db, 'gigs', gigId);
-  const reportRef = doc(db, 'reports', `${gigId}_${user.uid}`);
-
-  await runTransaction(db, async (tx) => {
-    const g = await tx.get(gigRef);
-    if (!g.exists()) throw new Error('NOT_FOUND');
-    if (g.data().status !== 'active') throw new Error('NOT_ACTIVE');
-    const flags = (g.data().flags as number) || 0;
-    const newFlags = flags + 1;
-    tx.set(reportRef, {
-      gigId,
-      reason,
-      reporterId: user.uid,
-      createdAt: serverTimestamp()
-    });
-    tx.update(gigRef, {
-      flags: newFlags,
-      status: newFlags >= HIDE_AFTER_REPORTS ? 'hidden' : 'active'
-    });
-  });
+  const call = httpsCallable<{ gigId: string; reason: ReportReason }, { flags: number; status: string }>(
+    functions,
+    'reportGigListing'
+  );
+  try {
+    await call({ gigId, reason });
+  } catch (err) {
+    const code = (err as { code?: string }).code ?? '';
+    if (code === 'functions/already-exists') {
+      throw new AlreadyReportedError();
+    }
+    throw err;
+  }
 }
 
 // ---------- Admin ----------
@@ -185,6 +182,7 @@ export async function getAdminQueue(): Promise<{ latest: Gig[]; flagged: Gig[] }
   const flaggedQ = query(
     collection(db, 'gigs'),
     where('flags', '>', 0),
+    orderBy('flags', 'asc'),
     orderBy('createdAt', 'desc'),
     limit(BROWSE_LIMIT)
   );
@@ -248,37 +246,45 @@ export async function hasSamples(): Promise<boolean> {
   return !snap.empty;
 }
 
+const BATCH_LIMIT = 400;
+
 export async function seedSamples(): Promise<void> {
-  for (const s of SAMPLE_GIGS) {
-    const ref = doc(collection(db, 'gigs'));
-    await setDoc(ref, {
-      title: s.title,
-      description: s.description,
-      category: s.category,
-      payMin: s.payMin,
-      payMax: s.payMax,
-      neighborhood: s.neighborhood,
-      posterUid: 'sample',
-      flags: 0,
-      status: 'active' as GigStatus,
-      verified: false,
-      isSample: true,
-      createdAt: serverTimestamp()
-    });
+  for (let i = 0; i < SAMPLE_GIGS.length; i += BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    const slice = SAMPLE_GIGS.slice(i, i + BATCH_LIMIT);
+    for (const s of slice) {
+      const ref = doc(collection(db, 'gigs'));
+      batch.set(ref, {
+        title: s.title,
+        description: s.description,
+        category: s.category,
+        payMin: s.payMin,
+        payMax: s.payMax,
+        neighborhood: s.neighborhood,
+        posterUid: 'sample',
+        flags: 0,
+        status: 'active' as GigStatus,
+        verified: false,
+        isSample: true,
+        createdAt: serverTimestamp()
+      });
+    }
+    await batch.commit();
   }
 }
 
 export async function removeAllSamples(): Promise<number> {
   const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(BROWSE_LIMIT));
   const snap = await getDocs(q);
-  let removed = 0;
-  for (const d of snap.docs) {
-    if (d.data().status !== 'removed') {
-      await updateDoc(doc(db, 'gigs', d.id), { status: 'removed' });
-      removed += 1;
+  const toRemove = snap.docs.filter((d) => d.data().status !== 'removed');
+  for (let i = 0; i < toRemove.length; i += BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    for (const d of toRemove.slice(i, i + BATCH_LIMIT)) {
+      batch.update(doc(db, 'gigs', d.id), { status: 'removed' });
     }
+    await batch.commit();
   }
-  return removed;
+  return toRemove.length;
 }
 
 // ---------- Saved (localStorage, offline-first) ----------

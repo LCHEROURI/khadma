@@ -13,7 +13,7 @@ export function GigCard({ gig }: { gig: Gig }) {
         <span className="chip chip-neigh">{formatNeighborhood(gig.neighborhood, t)}</span>
       </div>
       <h3 className="card-title">{gig.title}</h3>
-      <div className="card-pay">{formatPay(gig.payMin, gig.payMax)}</div>
+      <div className="card-pay">{formatPay(gig.payMin, gig.payMax, t('common.currency'))}</div>
       <div className="card-meta">
         <span className="meta-item">{timeAgo(gig, t)}</span>
         {gig.verified && (
