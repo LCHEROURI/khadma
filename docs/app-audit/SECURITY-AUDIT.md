@@ -7,7 +7,7 @@
    - Deleted `/api/contact/**` Hosting rewrite from `firebase.json`.
    - Replaced unauthenticated `onRequest` `contactGig` with 2nd Gen Callable Function `getGigContactLink` (`functions/src/index.ts`, `functions/src/contactHandler.ts`) using `onCall({ region: 'europe-west1', enforceAppCheck: true, maxInstances: 20 })`.
 2. **Firebase App Check + Firebase Auth + Dual Sliding-Window Rate Limiting:**
-   - **App Check:** Client initializes `ReCaptchaV3Provider` when `VITE_RECAPTCHA_SITE_KEY` is configured (`src/firebase.ts`); server enforces `enforceAppCheck: true` and checks `Boolean(request.app)`.
+   - **App Check:** Client initializes `ReCaptchaEnterpriseProvider` (Fraud Defense / reCAPTCHA Enterprise) when `VITE_RECAPTCHA_SITE_KEY` is configured (`src/firebase.ts`); server enforces `enforceAppCheck: true` and checks `Boolean(request.app)`.
    - **Authentication:** Client silently signs in via Firebase Anonymous Auth if unauthenticated (`src/lib/db.ts:requestGigContactLink`); server rejects missing `request.auth?.uid` with `unauthenticated`.
    - **Server-Side Rate Limiting:** Atomic Firestore transactions in server-only `contactRateLimits/{key}` (explicit `allow read, write: if false;` in `firestore.rules`) enforce:
      - **Per-UID cap:** max `8` unique gig contact reveals per rolling 60-minute window (idempotent re-taps on the same gig do not consume extra slots).
@@ -16,8 +16,8 @@
    - `WhatsAppButton.tsx` invokes `requestGigContactLink(gigId, lang)` on tap and opens `waUrl` via `window.open(..., '_blank', 'noopener,noreferrer')` with mobile `window.location.assign(waUrl)` fallback.
 
 ### Remaining Residual Phone-Number Exposure Risk (Why `SEC-001` Stays Open Until Live Verification)
-- **Live enforcement not yet active:** App Check (`VITE_RECAPTCHA_SITE_KEY` + Firebase Console reCAPTCHA v3 registration) and `getGigContactLink` are not yet deployed to `khadma-oran`.
-- **Inherent residual risk of direct `wa.me` handoff:** Because WhatsApp chat opens on the applicant's device via `https://wa.me/{e164}`, a legitimate user — or a sophisticated distributed residential-proxy botnet that passes reCAPTCHA v3 and stays below the per-IP/UID rate limits — will still receive the target poster's E.164 phone number upon tapping Contact. Eliminating even this residual exposure would require a server-relayed WhatsApp Business Cloud API (Option B, paid per-conversation).
+- **Live enforcement not yet active:** App Check (`VITE_RECAPTCHA_SITE_KEY` + Firebase Console Fraud Defense / reCAPTCHA Enterprise registration) and `getGigContactLink` are not yet deployed to `khadma-oran`.
+- **Inherent residual risk of direct `wa.me` handoff:** Because WhatsApp chat opens on the applicant's device via `https://wa.me/{e164}`, a legitimate user — or a sophisticated distributed residential-proxy botnet that passes Fraud Defense / reCAPTCHA Enterprise and stays below the per-IP/UID rate limits — will still receive the target poster's E.164 phone number upon tapping Contact. Eliminating even this residual exposure would require a server-relayed WhatsApp Business Cloud API (Option B, paid per-conversation).
 - **Pre-migration legacy documents:** Existing live `gigs/{id}` documents in `khadma-oran` still retain legacy `posterPhone`/`counterId` fields until `scripts/migrate-gig-contacts.mjs --apply` is explicitly approved and run.
 
 ## Automated Security & Rules Verification
@@ -36,4 +36,4 @@
 
 ## Remaining Low-Priority Security Item
 
-- **`SEC-004` (`OPEN — CODE IMPLEMENTED, PENDING CONSOLE ACTIVATION`):** Firebase App Check client (`ReCaptchaV3Provider` in `src/firebase.ts`) and server (`enforceAppCheck: true` on `getGigContactLink` & `reportGigListing`) are implemented, but cannot be marked closed until reCAPTCHA v3 is registered in Firebase Console and `VITE_RECAPTCHA_SITE_KEY` is configured for production builds.
+- **`SEC-004` (`OPEN — CODE IMPLEMENTED, PENDING CONSOLE ACTIVATION`):** Firebase App Check client (`ReCaptchaEnterpriseProvider` in `src/firebase.ts`) and server (`enforceAppCheck: true` on `getGigContactLink` & `reportGigListing`) are implemented, but cannot be marked closed until Fraud Defense (reCAPTCHA Enterprise Website / Score-based key) is registered in Firebase Console and `VITE_RECAPTCHA_SITE_KEY` is configured for production builds.

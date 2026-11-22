@@ -6,8 +6,8 @@
 - **Verified Commit:** `eaeadcbf95250914f5ddba98e5fab339f45307e9`
 - **GitHub Actions CI Run:** [45080643114](https://github.com/LCHEROURI/khadma/actions/runs/45080643114) (`conclusion: success`)
 - **Finding Reconciliation (26 total original findings):**
-  - **23 Closed & CI-Verified** (100% of code-level findings across High, Medium, and Low).
-  - **3 Pending Live-Environment Actions:** `SEC-001` (High, `OPEN`), `BUG-001` (High, `PENDING LIVE VERIFICATION`), `SEC-004` (Low, `OPEN`).
+  - **24 Closed & Verified** (all 23 code-level findings + `BUG-001` live admin email verification confirmed via Firebase Admin SDK: `emailVerified: true`).
+  - **2 Pending Live-Environment Actions:** `SEC-001` (High, `OPEN`), `SEC-004` (Low, `OPEN`).
 
 ## Verified CI Evidence (`45080643114`)
 
@@ -33,5 +33,5 @@
 
 ## Conditions to Upgrade to Full `PASS`
 
-1. Complete Firebase Console prerequisites (`cherouri@gmail.com` email verification, App Check reCAPTCHA v3 + `VITE_RECAPTCHA_SITE_KEY`, `+213` SMS region allowlist).
-2. Verify preview channel, execute ordered rollout (`functions` → low-traffic `hosting,firestore:rules,firestore:indexes`) + `gcloud firestore export` backup + dry-run/apply/reconcile migration, and pass live smoke tests including real Algerian carrier SMS OTP (closing `SEC-001`, `BUG-001`, `SEC-004`).
+1. Complete remaining Firebase Console prerequisites (Fraud Defense / reCAPTCHA Enterprise Website Score-based key + `VITE_RECAPTCHA_SITE_KEY`, `+213` SMS region allowlist). *(`BUG-001` admin email verification is already complete.)*
+2. Verify preview channel (`exchangeRecaptchaEnterpriseToken` `200 OK`), execute ordered rollout (`functions` → low-traffic `hosting,firestore:rules,firestore:indexes`) + `gcloud firestore export` backup + dry-run/apply/reconcile migration, and pass live smoke tests including real Algerian carrier SMS OTP (closing `SEC-001`, `SEC-004`).

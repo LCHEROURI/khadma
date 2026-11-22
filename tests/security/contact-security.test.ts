@@ -46,11 +46,19 @@ describe('SEC-001 deployment & transport hardening', () => {
     expect(hasPublicContactRewrite).toBe(false);
   });
 
-  it('configures getGigContactLink as an onCall function with enforceAppCheck: true', () => {
+  it('configures getGigContactLink and reportGigListing as onCall functions with enforceAppCheck: true', () => {
     const src = fs.readFileSync(path.resolve(process.cwd(), 'functions/src/index.ts'), 'utf8');
     expect(src).toContain('enforceAppCheck: true');
-    expect(src).toContain('onCall(');
+    expect(src).toContain('export const getGigContactLink = onCall(CONTACT_FUNCTION_OPTIONS');
+    expect(src).toContain('export const reportGigListing = onCall(CONTACT_FUNCTION_OPTIONS');
     expect(src).not.toContain('onRequest(');
+  });
+
+  it('initializes Firebase App Check with ReCaptchaEnterpriseProvider (not deprecated ReCaptchaV3Provider)', () => {
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/firebase.ts'), 'utf8');
+    expect(src).toContain('ReCaptchaEnterpriseProvider');
+    expect(src).toContain('initializeAppCheck');
+    expect(src).not.toContain('ReCaptchaV3Provider');
   });
 });
 

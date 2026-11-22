@@ -5,20 +5,20 @@
 - **Repair Branch:** `audit/high-priority-repairs-20261122`
 - **Verified Commit:** `eaeadcbf95250914f5ddba98e5fab339f45307e9`
 - **GitHub Actions CI Run:** [45080643114](https://github.com/LCHEROURI/khadma/actions/runs/45080643114) (`conclusion: success`)
-- **Reconciliation Summary:** **26 original findings** — **23 Closed & CI-Verified** (100% of code-level findings), **3 Open / Pending Live Environment & Migration** (`SEC-001`, `BUG-001`, `SEC-004`).
+- **Reconciliation Summary:** **26 original findings** — **24 Closed & Verified** (all 23 code-level findings + `BUG-001` live admin email verification), **2 Open / Pending Live App Check & Migration** (`SEC-001`, `SEC-004`).
 
-## Open Findings (3 — Pending Live Firebase Console Configuration, Deployment & Migration)
+## Open Findings (2 — Pending Live Firebase Console App Check Activation, Deployment & Migration)
 
 | ID | Stage | Severity | Certainty | Affected Files | Status & Evidence |
 |---|---|---|---|---|---|
-| `SEC-001` | 05 | High | CONFIRMED | `firestore.rules`, `functions/src/*`, `firebase.json`, `src/firebase.ts`, `src/components/WhatsAppButton.tsx`, `scripts/migrate-gig-contacts.mjs` | **OPEN (OPTION A IMPLEMENTED — PENDING LIVE VERIFICATION & MIGRATION).** Public GET redirect removed; `getGigContactLink` (`onCall`, `enforceAppCheck: true`, Auth + dual per-UID/IP rate limits) CI-verified (`7/7` contact security tests, `4/4` rules tests in run `45080643114`). Remains open until live App Check activation, ordered rollout, and safe legacy `gigs` migration (`PRODUCTION-READINESS.md` pre-migration script safety gap documented). |
-| `BUG-001` | 03 | High | CONFIRMED | `firestore.rules:50-54`, `src/hooks/useAuth.ts:29`, `src/pages/Admin.tsx` | **PENDING LIVE ADMIN EMAIL VERIFICATION.** Live `cherouri@gmail.com` confirmed `emailVerified: False` via `firebase auth:export`; localized verification UI implemented without weakening auth (`test:rules` PASS in run `45080643114`). |
-| `SEC-004` | 05 | Low | CONFIRMED | `src/firebase.ts`, Firebase Console | **OPEN (CODE IMPLEMENTED — PENDING APP CHECK CONSOLE ACTIVATION).** Client `ReCaptchaV3Provider` and server `enforceAppCheck: true` implemented; pending Firebase Console reCAPTCHA v3 registration and `VITE_RECAPTCHA_SITE_KEY` build env var. |
+| `SEC-001` | 05 | High | CONFIRMED | `firestore.rules`, `functions/src/*`, `firebase.json`, `src/firebase.ts`, `src/components/WhatsAppButton.tsx`, `scripts/migrate-gig-contacts.mjs` | **OPEN (OPTION A IMPLEMENTED WITH FRAUD DEFENSE — PENDING LIVE VERIFICATION & MIGRATION).** Public GET redirect removed; `getGigContactLink` (`onCall`, `enforceAppCheck: true`, Auth + dual per-UID/IP rate limits) and `ReCaptchaEnterpriseProvider` implemented and tested; migration script hardened (`4/4` unit tests). Remains open until live App Check activation, ordered rollout, and legacy `gigs` migration. |
+| `SEC-004` | 05 | Low | CONFIRMED | `src/firebase.ts`, Firebase Console | **OPEN (CODE IMPLEMENTED — PENDING FRAUD DEFENSE CONSOLE ACTIVATION).** Client `ReCaptchaEnterpriseProvider` and server `enforceAppCheck: true` implemented; pending Firebase Console Fraud Defense (reCAPTCHA Enterprise Website / Score-based key) registration and `VITE_RECAPTCHA_SITE_KEY`. |
 
-## Closed & CI-Verified Findings (23 — All High, Medium & Low Code Findings)
+## Closed & Verified Findings (24 — All High, Medium & Low Code Findings + Live `BUG-001`)
 
-| ID | Stage | Severity | Status | Verification Evidence (`eaeadcb` / CI Run `45080643114`) |
+| ID | Stage | Severity | Status | Verification Evidence |
 |---|---|---|---|---|
+| `BUG-001` | 03 | High | FIXED & VERIFIED | Live Firebase Admin SDK read-only check confirmed `cherouri@gmail.com` `emailVerified: true`, UID `V7owt5deJ9MZhzZH57jaBAsHiMq2` unchanged, `disabled: false`; localized verification UI & strict `email_verified == true` rules intact |
 | `QUAL-001` | 02 | High | FIXED & VERIFIED | `npm run typecheck` & `npm run build` PASS in CI `45080643114` |
 | `E2E-001` | 08 | High | FIXED & VERIFIED | CI `45080643114`: `test:unit` 11/11, `test:security` 11/11, `test:rules` 4/4, `test:e2e` 5/5 PASS |
 | `OPS-001` | 09 | High | FIXED & VERIFIED | `.github/workflows/ci.yml` executed & passed in CI `45080643114` |
