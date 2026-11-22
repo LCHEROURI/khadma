@@ -19,7 +19,7 @@ export function Header() {
       <div className="header-inner">
         <Logo size={32} />
         <div className="header-text">
-          <div className="header-name">KHADMA</div>
+          <div className="header-name">{t('appName')}</div>
           <div className="header-tag">{t('tagline')}</div>
         </div>
       </div>

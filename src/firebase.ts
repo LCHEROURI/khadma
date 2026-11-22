@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 
 // Web SDK config. The API key lives in .env (gitignored, loaded at build time)
 // — see .env.example. Everything else is public project metadata.
@@ -16,4 +16,6 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 // Offline-tolerant reads: Firestore local cache persists across restarts.
-export const db = initializeFirestore(app, { localCache: persistentLocalCache() });
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});

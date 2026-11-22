@@ -19,8 +19,9 @@ export interface Gig {
   payMin: number;
   payMax: number;
   neighborhood: string;
-  posterPhone: string; // E.164, never rendered
-  counterId: string; // phoneCounters doc id (E.164) or 'sample'
+  posterUid?: string; // Firebase UID (non-PII) or 'sample'
+  posterPhone?: string; // Legacy pre-migration field only; never written on new gigs or rendered in public UI
+  counterId?: string; // Legacy pre-migration field only; stored in private gigContacts/{gigId}
   flags: number;
   status: GigStatus;
   verified: boolean;

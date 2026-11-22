@@ -7,4 +7,9 @@ dev-dist/
 .DS_Store
 *.local
 firebase-debug.log
+firestore-debug.log
 .firebase/
+functions/node_modules/
+functions/lib/
+playwright-report/
+test-results/

@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged, type User } from 'firebase/auth';
+import { sendEmailVerification, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
 import { ADMIN_EMAIL } from '../lib/constants';
 import { adminApprove, adminRemove, getAdminQueue, hasSamples, removeAllSamples, seedSamples } from '../lib/db';
-import { formatPay } from '../lib/format';
+import { formatNeighborhood, formatPay } from '../lib/format';
 import type { Gig } from '../lib/types';
 import { Icon } from '../components/Icon';
 
 export function Admin() {
   const { t } = useLang();
-  const [user, setUser] = useState<User | null | undefined>(undefined);
+  const { user, loading: authLoading, isAdmin } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authErr, setAuthErr] = useState('');
@@ -20,22 +21,24 @@ export function Admin() {
   const [flagged, setFlagged] = useState<Gig[] | null>(null);
   const [samples, setSamples] = useState(false);
   const [notice, setNotice] = useState('');
+  const [verifySent, setVerifySent] = useState(false);
 
   const refresh = () => {
-    getAdminQueue().then(({ latest: l, flagged: f }) => {
-      setLatest(l);
-      setFlagged(f);
-    });
-    hasSamples().then(setSamples);
+    getAdminQueue()
+      .then(({ latest: l, flagged: f }) => {
+        setLatest(l);
+        setFlagged(f);
+      })
+      .catch(() => setNotice(t('common.error')));
+    hasSamples()
+      .then(setSamples)
+      .catch(() => {});
   };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (u && u.email === ADMIN_EMAIL) refresh();
-    });
-    return unsub;
-  }, []);
+    if (isAdmin) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   const login = async () => {
     setBusy(true);
@@ -56,9 +59,7 @@ export function Admin() {
     setFlagged(null);
   };
 
-  const isAdmin = user?.email === ADMIN_EMAIL;
-
-  if (user === undefined) {
+  if (authLoading) {
     return (
       <div className="page">
         <p className="muted center">{t('common.loading')}</p>
@@ -100,16 +101,68 @@ export function Admin() {
   }
 
   if (!isAdmin) {
+    const needsEmailVerify = user.email === ADMIN_EMAIL && !user.emailVerified;
     return (
       <div className="page">
         <h1 className="page-title">{t('admin.title')}</h1>
-        <div className="empty">
-          <p>{t('admin.notAdmin')}</p>
-          <p className="muted">{user.email}</p>
-          <button className="btn btn-ghost" onClick={logout}>
-            {t('admin.signout')}
-          </button>
-        </div>
+        {needsEmailVerify ? (
+          <div className="detail-card">
+            <h2 className="sheet-title">{t('admin.verifyTitle')}</h2>
+            <p className="muted">{t('admin.verifyText')}</p>
+            <p className="muted">{user.email}</p>
+            {verifySent && <p className="status-note sample-note">{t('admin.verifySent')}</p>}
+            {notice && <p className="form-error">{notice}</p>}
+            <div className="detail-actions">
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setNotice('');
+                  try {
+                    await sendEmailVerification(user);
+                    setVerifySent(true);
+                  } catch {
+                    setNotice(t('common.error'));
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {t('admin.sendVerify')}
+              </button>
+              <button
+                className="btn btn-ghost"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await user.reload();
+                    await user.getIdToken(true);
+                    window.location.reload();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {t('admin.verifyRefresh')}
+              </button>
+            </div>
+            <div className="center" style={{ marginTop: 12 }}>
+              <button className="btn btn-ghost" onClick={logout}>
+                {t('admin.signout')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="empty">
+            <p>{t('admin.notAdmin')}</p>
+            <p className="muted">{user.email}</p>
+            <button className="btn btn-ghost" onClick={logout}>
+              {t('admin.signout')}
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -133,7 +186,7 @@ export function Admin() {
     <div className="page">
       <h1 className="page-title">{t('admin.title')}</h1>
       <div className="admin-bar">
-        <span className="muted">cherouri@gmail.com</span>
+        <span className="muted">{user.email}</span>
         <button className="btn btn-ghost" onClick={logout}>
           {t('admin.signout')}
         </button>
@@ -193,7 +246,7 @@ export function Admin() {
                 </div>
                 <div className="admin-row-meta">
                   <span className="chip">{t(`categories.${g.category}`)}</span>
-                  <span className="chip chip-neigh">{g.neighborhood}</span>
+                  <span className="chip chip-neigh">{formatNeighborhood(g.neighborhood, t)}</span>
                   <span>{formatPay(g.payMin, g.payMax)}</span>
                   <span className="status-chip">{t(`admin.status.${g.status}`)}</span>
                   {g.flags > 0 && <span className="flag-chip">🚩 {t('admin.flags', { n: g.flags })}</span>}

@@ -1,21 +1,80 @@
 rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model (KHADMA — Oran Pilot)
+// ===============================================================
+//
+// Collection: gigs (publicly readable when status == 'active'; NO PII)
+// Document ID: auto-generated
+// Fields:
+//   - title: string (required, 3..120 chars)
+//   - description: string (required, 0..2000 chars)
+//   - category: string (required, enum of 7 categories)
+//   - payMin: int (required, 0..100000000)
+//   - payMax: int (required, payMin..100000000)
+//   - neighborhood: string (required, enum of 8 Oran neighborhoods)
+//   - posterUid: string (required, == request.auth.uid or 'sample' for admin, immutable)
+//   - flags: int (required, 0 on create, incremented +1 on report up to 100)
+//   - status: string (required, 'active' | 'hidden' | 'removed')
+//   - verified: bool (required, true for phone posters, false for admin samples)
+//   - isSample: bool (required, false for phone posters, true for admin samples)
+//   - createdAt: timestamp (required, == request.time on create, immutable)
+//
+// Collection: gigContacts (private PII — admin-only read; Cloud Function uses Admin SDK)
+// Document ID: {gigId} (1:1 with real /gigs/{gigId} document)
+// Fields:
+//   - posterPhone: string (required, == request.auth.token.phone_number, E.164)
+//   - counterId: string (required, == request.auth.token.phone_number, E.164)
+//   - posterUid: string (required, == request.auth.uid)
+//   - createdAt: timestamp (required, == request.time on create)
+//
+// Collection: phoneCounters
+// Document ID: E.164 phone number (e.g. +213555123456)
+// Fields:
+//   - count: int (required, 1 on create, monotonic +1 up to 5 for owner; 0..5 for admin)
+//
+// Collection: reports
+// Document ID: {gigId}_{reporterUid} (deterministic, one report per user per gig)
+// Fields:
+//   - gigId: string (required, 1..128 chars)
+//   - reason: string (required, enum of 5 report reasons)
+//   - reporterId: string (required, == request.auth.uid)
+//   - createdAt: timestamp (required, == request.time on create)
+//
+// ===============================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
 
     function signedIn() {
       return request.auth != null;
     }
 
     function isAdmin() {
-      return signedIn() && request.auth.token.email == 'cherouri@gmail.com';
+      return signedIn()
+        && request.auth.token.email == 'cherouri@gmail.com'
+        && request.auth.token.email_verified == true;
     }
 
     function isPhoneUser() {
       return signedIn() && request.auth.token.phone_number != null;
     }
 
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
     function validGigFields() {
-      return request.resource.data.title is string
+      return request.resource.data.keys().hasOnly([
+          'title', 'description', 'category', 'payMin', 'payMax',
+          'neighborhood', 'posterUid', 'flags',
+          'status', 'verified', 'isSample', 'createdAt'
+        ])
+        && request.resource.data.title is string
         && request.resource.data.title.size() >= 3
         && request.resource.data.title.size() <= 120
         && request.resource.data.description is string
@@ -30,79 +89,131 @@ service cloud.firestore {
         && request.resource.data.payMin <= 100000000
         && request.resource.data.payMax is int
         && request.resource.data.payMax >= request.resource.data.payMin
+        && request.resource.data.payMax <= 100000000
+        && request.resource.data.posterUid is string
+        && request.resource.data.posterUid.size() > 0
+        && request.resource.data.posterUid.size() <= 128
         && request.resource.data.createdAt == request.time;
     }
 
-    match /gigs/{gigId} {
-      // Browsing is public. Raw phone numbers live in posterPhone but are
-      // never rendered by the client; contact goes through wa.me only.
-      allow read: if true;
+    function hasValidPhoneCounterIncrement(phone) {
+      let counterPath = /databases/$(database)/documents/phoneCounters/$(phone);
+      return (!exists(counterPath)
+              && existsAfter(counterPath)
+              && getAfter(counterPath).data.count == 1)
+        || (exists(counterPath)
+            && existsAfter(counterPath)
+            && getAfter(counterPath).data.count == get(counterPath).data.count + 1
+            && getAfter(counterPath).data.count <= 5);
+    }
 
-      // Real posts: poster must be phone-verified (SMS OTP) and the
-      // WhatsApp/contact number MUST be the verified number. The 5-active-gig
-      // cap is enforced via the poster's own monotonic phoneCounters doc,
-      // which only they can create/increment (+1 only).
-      allow create: if isPhoneUser()
-          && request.auth.token.phone_number == request.resource.data.posterPhone
-          && request.auth.token.phone_number == request.resource.data.counterId
+    function isValidReportGigUpdate(gigId) {
+      let reportPath = /databases/$(database)/documents/reports/$(gigId + '_' + request.auth.uid);
+      return signedIn()
+        && resource.data.status == 'active'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['flags', 'status'])
+        && request.resource.data.flags is int
+        && request.resource.data.flags == resource.data.flags + 1
+        && request.resource.data.flags <= 100
+        && ((request.resource.data.flags < 3 && request.resource.data.status == 'active')
+            || (request.resource.data.flags >= 3 && request.resource.data.status == 'hidden'))
+        && !exists(reportPath)
+        && existsAfter(reportPath);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /gigs/{gigId} {
+      // Only active gigs are publicly browsable; hidden/removed gigs are admin-only.
+      // Phone PII is NOT stored here — it lives exclusively in private /gigContacts/{gigId}.
+      allow read: if resource.data.status == 'active' || isAdmin();
+
+      // Real posts: poster must be phone-verified (SMS OTP). The 5-active-gig cap is
+      // strictly enforced via a transactional +1 increment on phoneCounters/{phone},
+      // and a paired private /gigContacts/{gigId} doc must be created atomically.
+      allow create: if (isPhoneUser()
+          && request.resource.data.posterUid == request.auth.uid
           && request.resource.data.status == 'active'
           && request.resource.data.flags == 0
           && request.resource.data.verified == true
           && request.resource.data.isSample == false
-          && getAfter(/databases/$(database)/documents/phoneCounters/$(request.auth.token.phone_number)).data.count >= 1
-          && getAfter(/databases/$(database)/documents/phoneCounters/$(request.auth.token.phone_number)).data.count <= 5
           && validGigFields()
-        // Admin may seed the board with clearly-marked sample gigs (no phone).
+          && hasValidPhoneCounterIncrement(request.auth.token.phone_number)
+          && existsAfter(/databases/$(database)/documents/gigContacts/$(gigId)))
+        // Admin may seed the board with clearly-marked sample gigs (no phone/contact).
         || (isAdmin()
           && request.resource.data.isSample == true
           && request.resource.data.verified == false
-          && request.resource.data.posterPhone == 'sample'
-          && request.resource.data.counterId == 'sample'
+          && request.resource.data.posterUid == 'sample'
           && request.resource.data.status == 'active'
           && request.resource.data.flags == 0
           && validGigFields());
 
-      // Reports: any signed-in user (anonymous allowed) adds exactly one flag;
-      // the 3rd flag auto-hides the gig (status 'hidden', pending review).
-      // Admin can do anything.
-      allow update: if isAdmin()
-        || (signedIn()
-            && resource.data.status == 'active'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['flags', 'status'])
-            && request.resource.data.flags == resource.data.flags + 1
-            && request.resource.data.flags <= 100
-            && ((request.resource.data.flags < 3 && request.resource.data.status == 'active')
-                || (request.resource.data.flags >= 3 && request.resource.data.status == 'hidden')));
+      // Reports: any signed-in user (anonymous allowed) adds exactly one flag
+      // paired with a deterministic reports/{gigId}_{uid} document; the 3rd flag
+      // auto-hides the gig (status 'hidden', pending review). Admin can moderate.
+      allow update: if isAdmin() || isValidReportGigUpdate(gigId);
 
       allow delete: if isAdmin();
     }
 
+    match /gigContacts/{gigId} {
+      // Private phone PII. NEVER publicly readable; Cloud Function reads via Admin SDK,
+      // and admin reads for moderation and phoneCounters lookup.
+      allow read: if isAdmin();
+
+      allow create: if isPhoneUser()
+        && request.resource.data.keys().hasOnly(['posterPhone', 'counterId', 'posterUid', 'createdAt'])
+        && request.resource.data.posterPhone == request.auth.token.phone_number
+        && request.resource.data.counterId == request.auth.token.phone_number
+        && request.resource.data.posterUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/gigs/$(gigId))
+        && getAfter(/databases/$(database)/documents/gigs/$(gigId)).data.posterUid == request.auth.uid;
+
+      allow update, delete: if isAdmin();
+    }
+
     match /phoneCounters/{phone} {
-      // Monotonic per-phone counter. Only the verified owner can create (count
-      // 1) or increment (strictly +1); only admin can decrement/reset/delete.
+      // Monotonic per-phone counter. Only the verified owner can read, create
+      // (count == 1), or increment (strictly +1, <= 5); only admin can decrement/reset/delete.
+      allow read: if (isPhoneUser() && phone == request.auth.token.phone_number) || isAdmin();
+
       allow create: if isPhoneUser()
         && phone == request.auth.token.phone_number
+        && request.resource.data.keys().hasOnly(['count'])
+        && request.resource.data.count is int
         && request.resource.data.count == 1;
 
-      allow update: if signedIn()
-        && ((phone == request.auth.token.phone_number
-             && request.resource.data.count == resource.data.count + 1)
-            || (isAdmin() && request.resource.data.count >= 0));
+      allow update: if request.resource.data.keys().hasOnly(['count'])
+        && request.resource.data.count is int
+        && ((isPhoneUser()
+             && phone == request.auth.token.phone_number
+             && request.resource.data.count == resource.data.count + 1
+             && request.resource.data.count <= 5)
+            || (isAdmin()
+                && request.resource.data.count >= 0
+                && request.resource.data.count <= 5));
 
       allow delete: if isAdmin();
-
-      allow read: if signedIn()
-        && (phone == request.auth.token.phone_number || isAdmin());
     }
 
     match /reports/{reportId} {
       allow read: if isAdmin();
+
       allow create: if signedIn()
+        && reportId == request.resource.data.gigId + '_' + request.auth.uid
+        && request.resource.data.keys().hasOnly(['gigId', 'reason', 'reporterId', 'createdAt'])
         && request.resource.data.gigId is string
         && request.resource.data.gigId.size() > 0
+        && request.resource.data.gigId.size() <= 128
         && request.resource.data.reason in ['scam', 'offensive', 'wrongInfo', 'spam', 'other']
         && request.resource.data.reporterId == request.auth.uid
         && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if isAdmin();
     }
   }
 }

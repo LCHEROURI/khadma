@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
-import { formatPay, timeAgo } from '../lib/format';
+import { formatNeighborhood, formatPay, timeAgo } from '../lib/format';
 import type { Gig } from '../lib/types';
 import { Icon } from './Icon';
 
@@ -10,7 +10,7 @@ export function GigCard({ gig }: { gig: Gig }) {
     <Link to={`/gig/${gig.id}`} className="card">
       <div className="card-chips">
         <span className="chip">{t(`categories.${gig.category}`)}</span>
-        <span className="chip chip-neigh">{gig.neighborhood}</span>
+        <span className="chip chip-neigh">{formatNeighborhood(gig.neighborhood, t)}</span>
       </div>
       <h3 className="card-title">{gig.title}</h3>
       <div className="card-pay">{formatPay(gig.payMin, gig.payMax)}</div>

@@ -408,7 +408,8 @@ textarea {
   color: var(--brand-dark);
 }
 
-.wide {
+.wide,
+.btn-block {
   width: 100%;
 }
 
@@ -459,10 +460,30 @@ textarea {
   margin: var(--s-3) 0;
 }
 
-.form-hint {
+.form-hint,
+.field-hint {
   font-size: var(--fs-xs);
   color: var(--ink-3);
-  margin-top: var(--s-1);
+  margin: var(--s-1) 0 0;
+}
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.pay-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.pay-suffix {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+  padding-inline: var(--s-1);
 }
 
 /* ---------- gig detail ---------- */
@@ -660,7 +681,8 @@ textarea {
 }
 
 /* ---------- post steps ---------- */
-.step-card {
+.step-card,
+.panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
@@ -668,15 +690,38 @@ textarea {
   box-shadow: var(--shadow-sm);
 }
 
-.step-card h2 {
+.step-card h2,
+.panel h2 {
   font-size: var(--fs-lg);
   font-weight: 800;
   margin: 0 0 var(--s-2);
 }
 
-.step-card > p {
+.step-card > p,
+.panel > p.muted {
   color: var(--ink-2);
-  margin: 0 0 var(--s-5);
+  margin: 0 0 var(--s-4);
+}
+
+.verified-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  border-radius: var(--r-sm);
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  margin-bottom: var(--s-3);
+}
+
+.small {
+  font-size: var(--fs-xs);
+}
+
+.recap {
+  min-height: 0;
 }
 
 .remaining {
@@ -899,6 +944,10 @@ textarea {
 
 [dir='rtl'] .reason-item {
   text-align: start;
+}
+
+[dir='rtl'] .back-link svg {
+  transform: scaleX(-1);
 }
 
 /* ---------- small screens ---------- */

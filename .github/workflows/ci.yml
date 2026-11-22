@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'audit/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java 21 (for Firebase Emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install functions dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Typecheck web app
+        run: npm run typecheck
+
+      - name: Typecheck & build Cloud Functions
+        working-directory: functions
+        run: npm run typecheck && npm run build
+
+      - name: Build web PWA
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || 'ci-placeholder-key' }}
+        run: npm run build
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Install Firebase CLI & run Firestore Security Rules tests
+        run: |
+          npm install -g firebase-tools
+          npm run test:rules
+
+      - name: Install Playwright Chromium & run E2E smoke tests
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || 'ci-placeholder-key' }}
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e

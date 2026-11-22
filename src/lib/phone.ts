@@ -6,8 +6,14 @@ export function normalizeDzPhone(input: string): string | null {
   if (d.startsWith('00')) d = '+' + d.slice(2);
   if (/^213/.test(d) && !d.startsWith('+')) d = '+' + d;
   if (d.startsWith('0')) d = '+213' + d.slice(1);
+  if (/^[567]\d{8}$/.test(d)) d = '+213' + d;
   if (!/^\+213[567]\d{8}$/.test(d)) return null;
   return d;
+}
+
+// Privacy-safe server redirect URL for WhatsApp contact (keeps posterPhone out of public Firestore reads).
+export function gigContactLink(gigId: string, lang: string): string {
+  return `/api/contact/${encodeURIComponent(gigId)}?lang=${encodeURIComponent(lang)}`;
 }
 
 // wa.me link (number without '+').

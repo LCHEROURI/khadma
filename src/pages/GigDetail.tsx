@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
 import { getGig } from '../lib/db';
-import { formatPay, timeAgo } from '../lib/format';
+import { formatNeighborhood, formatPay, timeAgo } from '../lib/format';
 import { isSaved, toggleSaved } from '../lib/db';
 import type { Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
@@ -74,7 +74,7 @@ export function GigDetail() {
       <div className="detail-card">
         <div className="card-chips">
           <span className="chip">{t(`categories.${gig.category}`)}</span>
-          <span className="chip chip-neigh">{gig.neighborhood}</span>
+          <span className="chip chip-neigh">{formatNeighborhood(gig.neighborhood, t)}</span>
           {gig.isSample && <span className="chip chip-sample">{t('gig.sampleBadge')}</span>}
           {gig.verified && (
             <span className="verified">
@@ -94,9 +94,9 @@ export function GigDetail() {
 
         {gig.isSample ? (
           <p className="muted">{t('gig.whatsappSampleNote')}</p>
-        ) : (
-          <WhatsAppButton phone={gig.posterPhone} />
-        )}
+        ) : gig.status === 'active' ? (
+          <WhatsAppButton gigId={gig.id} />
+        ) : null}
 
         <div className="detail-actions">
           <button

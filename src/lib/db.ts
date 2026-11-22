@@ -9,8 +9,11 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
+  startAfter,
   updateDoc,
-  where
+  where,
+  type DocumentData,
+  type QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { auth, db } from '../firebase';
@@ -26,15 +29,32 @@ export class RateLimitError extends Error {
 
 // ---------- Browse ----------
 
-export async function getActiveGigs(): Promise<Gig[]> {
-  const q = query(
-    collection(db, 'gigs'),
-    where('status', '==', 'active'),
-    orderBy('createdAt', 'desc'),
-    limit(BROWSE_LIMIT)
-  );
+export async function getActiveGigsPage(
+  after: QueryDocumentSnapshot<DocumentData> | null = null,
+  pageSize = 50
+): Promise<{ gigs: Gig[]; lastDoc: QueryDocumentSnapshot<DocumentData> | null; hasMore: boolean }> {
+  const q = after
+    ? query(
+        collection(db, 'gigs'),
+        where('status', '==', 'active'),
+        orderBy('createdAt', 'desc'),
+        startAfter(after),
+        limit(pageSize)
+      )
+    : query(
+        collection(db, 'gigs'),
+        where('status', '==', 'active'),
+        orderBy('createdAt', 'desc'),
+        limit(pageSize)
+      );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+  const gigs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+  const hasMore = snap.docs.length === pageSize;
+  return {
+    gigs,
+    lastDoc: hasMore ? snap.docs[snap.docs.length - 1] : null,
+    hasMore
+  };
 }
 
 export async function getGig(id: string): Promise<Gig | null> {
@@ -44,12 +64,10 @@ export async function getGig(id: string): Promise<Gig | null> {
 }
 
 export async function getGigsByIds(ids: string[]): Promise<Gig[]> {
-  const out: Gig[] = [];
-  for (const id of ids.slice(0, 60)) {
-    const g = await getGig(id);
-    if (g) out.push(g);
-  }
-  return out;
+  const results = await Promise.all(
+    ids.slice(0, 60).map((id) => getGig(id).catch(() => null))
+  );
+  return results.filter((g): g is Gig => g !== null);
 }
 
 // ---------- Post (SMS-verified phone required) ----------
@@ -70,11 +88,13 @@ export async function postGig(input: PostGigInput): Promise<string> {
 
   const counterRef = doc(db, 'phoneCounters', phone);
   const gigRef = doc(collection(db, 'gigs'));
+  const contactRef = doc(db, 'gigContacts', gigRef.id);
 
   await runTransaction(db, async (tx) => {
     const counter = await tx.get(counterRef);
     const count = counter.exists() ? (counter.data().count as number) : 0;
     if (count >= MAX_ACTIVE_GIGS) throw new RateLimitError();
+    const now = serverTimestamp();
     tx.set(counterRef, { count: count + 1 });
     tx.set(gigRef, {
       title: input.title.trim(),
@@ -83,13 +103,18 @@ export async function postGig(input: PostGigInput): Promise<string> {
       payMin: Math.round(input.payMin),
       payMax: Math.round(input.payMax),
       neighborhood: input.neighborhood,
-      posterPhone: phone,
-      counterId: phone,
+      posterUid: user.uid,
       flags: 0,
       status: 'active' as GigStatus,
       verified: true,
       isSample: false,
-      createdAt: serverTimestamp()
+      createdAt: now
+    });
+    tx.set(contactRef, {
+      posterPhone: phone,
+      counterId: phone,
+      posterUid: user.uid,
+      createdAt: now
     });
   });
   return gigRef.id;
@@ -115,7 +140,7 @@ export async function reportGig(gigId: string, reason: ReportReason): Promise<vo
   if (!user) throw new Error('NO_AUTH');
 
   const gigRef = doc(db, 'gigs', gigId);
-  const reportRef = doc(collection(db, 'reports'));
+  const reportRef = doc(db, 'reports', `${gigId}_${user.uid}`);
 
   await runTransaction(db, async (tx) => {
     const g = await tx.get(gigRef);
@@ -153,20 +178,46 @@ export async function getAdminQueue(): Promise<{ latest: Gig[]; flagged: Gig[] }
 }
 
 export async function adminApprove(gigId: string): Promise<void> {
-  await updateDoc(doc(db, 'gigs', gigId), { status: 'active', flags: 0 });
-}
-
-export async function adminRemove(gigId: string): Promise<void> {
   const gigRef = doc(db, 'gigs', gigId);
+  const contactRef = doc(db, 'gigContacts', gigId);
   await runTransaction(db, async (tx) => {
     const g = await tx.get(gigRef);
     if (!g.exists()) return;
     const data = g.data();
-    // Free the poster's rate-limit slot if the gig was still active.
-    if (data.status === 'active' && typeof data.counterId === 'string' && data.counterId !== 'sample') {
-      const c = await tx.get(doc(db, 'phoneCounters', data.counterId));
+    const contactSnap = await tx.get(contactRef);
+    const counterId =
+      (contactSnap.exists() ? (contactSnap.data().counterId as string | undefined) : undefined) ??
+      (typeof data.counterId === 'string' ? data.counterId : undefined);
+    // Re-claim the poster's rate-limit slot if restoring a previously removed gig.
+    if (data.status === 'removed' && counterId && counterId !== 'sample') {
+      const counterRef = doc(db, 'phoneCounters', counterId);
+      const c = await tx.get(counterRef);
+      if (c.exists()) {
+        const cur = c.data().count as number;
+        tx.set(counterRef, { count: Math.min(MAX_ACTIVE_GIGS, cur + 1) });
+      }
+    }
+    tx.update(gigRef, { status: 'active', flags: 0 });
+  });
+}
+
+export async function adminRemove(gigId: string): Promise<void> {
+  const gigRef = doc(db, 'gigs', gigId);
+  const contactRef = doc(db, 'gigContacts', gigId);
+  await runTransaction(db, async (tx) => {
+    const g = await tx.get(gigRef);
+    if (!g.exists()) return;
+    const data = g.data();
+    const contactSnap = await tx.get(contactRef);
+    const counterId =
+      (contactSnap.exists() ? (contactSnap.data().counterId as string | undefined) : undefined) ??
+      (typeof data.counterId === 'string' ? data.counterId : undefined);
+    // Free the poster's rate-limit slot if the gig was active or auto-hidden.
+    if ((data.status === 'active' || data.status === 'hidden') && counterId && counterId !== 'sample') {
+      const counterRef = doc(db, 'phoneCounters', counterId);
+      const c = await tx.get(counterRef);
       if (c.exists() && (c.data().count as number) >= 1) {
-        tx.set(doc(db, 'phoneCounters', data.counterId), { count: (c.data().count as number) - 1 });
+        tx.set(counterRef, { count: (c.data().count as number) - 1 });
       }
     }
     tx.update(gigRef, { status: 'removed' });
@@ -189,8 +240,7 @@ export async function seedSamples(): Promise<void> {
       payMin: s.payMin,
       payMax: s.payMax,
       neighborhood: s.neighborhood,
-      posterPhone: 'sample',
-      counterId: 'sample',
+      posterUid: 'sample',
       flags: 0,
       status: 'active' as GigStatus,
       verified: false,

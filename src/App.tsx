@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { LangProvider } from './lib/i18n';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Browse } from './pages/Browse';
 import { GigDetail } from './pages/GigDetail';
 import { PostGig } from './pages/PostGig';
@@ -26,15 +27,17 @@ export default function App() {
         <div className="app">
           <Header />
           <main className="main">
-            <Routes>
-              <Route path="/" element={<Browse />} />
-              <Route path="/gig/:id" element={<GigDetail />} />
-              <Route path="/post" element={<PostGig />} />
-              <Route path="/saved" element={<Saved />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/admin" element={<Admin />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Browse />} />
+                <Route path="/gig/:id" element={<GigDetail />} />
+                <Route path="/post" element={<PostGig />} />
+                <Route path="/saved" element={<Saved />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/admin" element={<Admin />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </ErrorBoundary>
           </main>
           <BottomNav />
         </div>

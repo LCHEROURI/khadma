@@ -1,4 +1,5 @@
 import type { Gig } from './types';
+import { NEIGHBORHOOD_KEYS } from './constants';
 
 const nf = new Intl.NumberFormat('fr-FR');
 
@@ -6,6 +7,14 @@ export function formatPay(min: number, max: number): string {
   const lo = nf.format(min);
   if (min === max) return `${lo} DZD`;
   return `${lo}–${nf.format(max)} DZD`;
+}
+
+export function formatNeighborhood(
+  name: string,
+  t: (k: string, vars?: Record<string, string | number>) => string
+): string {
+  const key = NEIGHBORHOOD_KEYS[name];
+  return key ? t(key) : name;
 }
 
 export function timeAgo(gig: Gig, t: (k: string, vars?: Record<string, string | number>) => string): string {

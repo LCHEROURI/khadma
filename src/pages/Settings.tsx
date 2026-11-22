@@ -2,33 +2,26 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
 import { LANGS } from '../lib/strings';
+import {
+  clearDeferredInstallPrompt,
+  getDeferredInstallPrompt,
+  subscribeInstallPrompt,
+  type BeforeInstallPromptEvent
+} from '../lib/pwa';
 import { Icon } from '../components/Icon';
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: string }>;
-}
 
 export function Settings() {
   const { t, lang, setLang } = useLang();
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
+  const { phoneNumber: phone } = useAuth();
+  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(() => getDeferredInstallPrompt());
   const [installed, setInstalled] = useState(false);
-  const [phone, setPhone] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
-    const h = (e: Event) => {
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEvent);
-    };
-    window.addEventListener('beforeinstallprompt', h);
-    return () => window.removeEventListener('beforeinstallprompt', h);
-  }, []);
-
-  useEffect(() => {
-    setPhone(auth.currentUser?.phoneNumber ?? null);
-    return auth.onAuthStateChanged((u) => setPhone(u?.phoneNumber ?? null));
+    setDeferred(getDeferredInstallPrompt());
+    return subscribeInstallPrompt(setDeferred);
   }, []);
 
   const install = async () => {
@@ -36,7 +29,7 @@ export function Settings() {
     await deferred.prompt();
     const choice = await deferred.userChoice;
     if (choice.outcome === 'accepted') setInstalled(true);
-    setDeferred(null);
+    clearDeferredInstallPrompt();
   };
 
   return (
@@ -59,12 +52,14 @@ export function Settings() {
         </div>
       </section>
 
-      {deferred && (
+      {(deferred || installed) && (
         <section className="settings-section">
-          <button className="btn btn-primary wide" onClick={install}>
-            <Icon name="download" size={18} />
-            {t('settings.install')}
-          </button>
+          {deferred && (
+            <button className="btn btn-primary wide" onClick={install}>
+              <Icon name="download" size={18} />
+              {t('settings.install')}
+            </button>
+          )}
           {installed && <p className="muted center">{t('settings.installDone')}</p>}
         </section>
       )}

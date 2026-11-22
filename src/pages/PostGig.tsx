@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../firebase';
+import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
-import { CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
+import { CATEGORIES, MAX_ACTIVE_GIGS, MAX_PAY_DZD, MIN_TITLE_LENGTH, NEIGHBORHOODS } from '../lib/constants';
 import { getRemainingForPhone, postGig, RateLimitError } from '../lib/db';
-import { errKey } from '../lib/format';
+import { errKey, formatNeighborhood } from '../lib/format';
 import { normalizeDzPhone } from '../lib/phone';
 import type { Category } from '../lib/types';
 import { Banner } from '../components/Banner';
@@ -15,13 +16,13 @@ type Step = 'verify' | 'code' | 'form';
 export function PostGig() {
   const { t } = useLang();
   const navigate = useNavigate();
+  const { phoneNumber: authPhone, loading: authLoading } = useAuth();
   const recapRef = useRef<HTMLDivElement>(null);
   const [recap, setRecap] = useState<RecaptchaVerifier | null>(null);
 
-  const phoneUser = auth.currentUser?.phoneNumber ?? null;
-  const [step, setStep] = useState<Step>(phoneUser ? 'form' : 'verify');
+  const [step, setStep] = useState<Step>(authPhone ? 'form' : 'verify');
   const [phoneInput, setPhoneInput] = useState('');
-  const [phone, setPhone] = useState(phoneUser ?? '');
+  const [phone, setPhone] = useState(authPhone ?? '');
   const [code, setCode] = useState('');
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -35,6 +36,13 @@ export function PostGig() {
   const [payMax, setPayMax] = useState('');
   const [neighborhood, setNeighborhood] = useState(NEIGHBORHOODS[0]);
   const [remaining, setRemaining] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (authPhone) {
+      setPhone(authPhone);
+      setStep('form');
+    }
+  }, [authPhone]);
 
   useEffect(() => {
     if (recapRef.current && !recap) {
@@ -99,20 +107,36 @@ export function PostGig() {
   };
 
   const submit = async () => {
-    if (!title.trim() || !description.trim() || !payMin) {
+    const cleanTitle = title.trim();
+    const cleanDesc = description.trim();
+    if (cleanTitle.length < MIN_TITLE_LENGTH || !cleanDesc || !payMin) {
       setErr(t('post.required'));
       return;
     }
     const min = parseInt(payMin, 10);
     const max = payMax ? parseInt(payMax, 10) : min;
-    if (Number.isNaN(min) || min < 0 || Number.isNaN(max) || max < min) {
+    if (
+      Number.isNaN(min) ||
+      min < 0 ||
+      min > MAX_PAY_DZD ||
+      Number.isNaN(max) ||
+      max < min ||
+      max > MAX_PAY_DZD
+    ) {
       setErr(t('post.required'));
       return;
     }
     setBusy(true);
     setErr('');
     try {
-      const id = await postGig({ title, description, category, payMin: min, payMax: max, neighborhood });
+      const id = await postGig({
+        title: cleanTitle,
+        description: cleanDesc,
+        category,
+        payMin: min,
+        payMax: max,
+        neighborhood
+      });
       navigate(`/gig/${id}`, { state: { justPosted: true } });
     } catch (e) {
       if (e instanceof RateLimitError) setErr(t('post.rateLimit'));
@@ -136,7 +160,11 @@ export function PostGig() {
       <h1 className="page-title">{t('post.title')}</h1>
       <div ref={recapRef} className="recap" />
 
-      {step === 'verify' && (
+      {authLoading ? (
+        <p className="muted center">{t('common.loading')}</p>
+      ) : null}
+
+      {!authLoading && step === 'verify' && (
         <div className="panel">
           <h2>{t('post.verifyTitle')}</h2>
           <p className="muted">{t('post.verifyText')}</p>
@@ -194,7 +222,7 @@ export function PostGig() {
             {t('post.verifiedAs', { phone })}
           </div>
           {remaining !== null && (
-            <p className="muted small">{t('post.remaining', { n: remaining })}</p>
+            <p className="remaining">{t('post.remaining', { n: MAX_ACTIVE_GIGS - remaining })}</p>
           )}
           <h2>{t('post.formTitle')}</h2>
           <label className="field">
@@ -236,7 +264,7 @@ export function PostGig() {
             <select value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)}>
               {NEIGHBORHOODS.map((n) => (
                 <option key={n} value={n}>
-                  {n}
+                  {formatNeighborhood(n, t)}
                 </option>
               ))}
             </select>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { getDocs, collection, query, where, orderBy, limit, startAfter, type QueryDocumentSnapshot, type DocumentData } from 'firebase/firestore';
-import { db } from '../firebase';
+import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { useLang } from '../lib/i18n';
 import { CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
+import { getActiveGigsPage } from '../lib/db';
+import { formatNeighborhood } from '../lib/format';
 import type { Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
 import { GigCard } from '../components/GigCard';
@@ -19,37 +20,17 @@ export function Browse() {
   const [cat, setCat] = useState('');
   const [neigh, setNeigh] = useState('');
 
-  const load = async (after: QueryDocumentSnapshot<DocumentData> | null) => {
-    const q = after
-      ? query(
-          collection(db, 'gigs'),
-          where('status', '==', 'active'),
-          orderBy('createdAt', 'desc'),
-          startAfter(after),
-          limit(PAGE)
-        )
-      : query(
-          collection(db, 'gigs'),
-          where('status', '==', 'active'),
-          orderBy('createdAt', 'desc'),
-          limit(PAGE)
-        );
-    const snap = await getDocs(q);
-    return snap;
-  };
-
   useEffect(() => {
     let cancelled = false;
     let attempts = 0;
     setLoading(true);
     setError('');
     const tryLoad = () => {
-      load(null)
-        .then((snap) => {
+      getActiveGigsPage(null, PAGE)
+        .then(({ gigs: items, lastDoc: nextLast }) => {
           if (cancelled) return;
-          const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
           setGigs(items);
-          setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+          setLastDoc(nextLast);
           setLoading(false);
         })
         .catch(() => {
@@ -76,10 +57,9 @@ export function Browse() {
     if (!lastDoc || loadingMore) return;
     setLoadingMore(true);
     try {
-      const snap = await load(lastDoc);
-      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+      const { gigs: items, lastDoc: nextLast } = await getActiveGigsPage(lastDoc, PAGE);
       setGigs((g) => [...g, ...items]);
-      setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+      setLastDoc(nextLast);
     } catch {
       setError(t('common.error'));
     } finally {
@@ -113,7 +93,7 @@ export function Browse() {
             <option value="">{t('browse.filters.neighborhoodAll')}</option>
             {NEIGHBORHOODS.map((n) => (
               <option key={n} value={n}>
-                {n}
+                {formatNeighborhood(n, t)}
               </option>
             ))}
           </select>
