@@ -39,4 +39,5 @@ export const MAX_PAY_DZD = 100000000;
 export const MIN_TITLE_LENGTH = 3;
 export const HIDE_AFTER_REPORTS = 3;
 export const ADMIN_EMAIL = 'cherouri@gmail.com';
-export const BROWSE_LIMIT = 150;
+export const BROWSE_PAGE_SIZE = 50;
+export const ADMIN_QUEUE_LIMIT = 150;

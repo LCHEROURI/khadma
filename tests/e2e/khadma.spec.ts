@@ -23,12 +23,12 @@ test.describe('KHADMA critical mobile user journeys', () => {
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
   });
 
-  test('shows safety banner and validates Algerian phone input on /post', async ({ page }) => {
+  test('shows safety banner and validates Algerian phone input on /post via Enter key', async ({ page }) => {
     await page.goto('/post');
     await expect(page.locator('.banner')).toBeVisible();
     const phoneInput = page.locator('input[type="tel"]');
     await phoneInput.fill('041123456'); // invalid landline
-    await page.getByRole('button').first().click();
+    await phoneInput.press('Enter');
     await expect(page.locator('.form-error')).toBeVisible();
   });
 

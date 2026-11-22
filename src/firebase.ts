@@ -3,6 +3,7 @@ import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
+import { validateFirebaseConfig } from './lib/firebaseConfig';
 
 // Web SDK config. The API key lives in .env (gitignored, loaded at build time)
 // — see .env.example. Everything else is public project metadata.
@@ -14,6 +15,11 @@ const firebaseConfig = {
   messagingSenderId: '1000158969612',
   appId: '1:1000158969612:web:1e92c73336c232a8d25329'
 };
+
+const missingConfig = validateFirebaseConfig(firebaseConfig);
+if (missingConfig.length > 0 && typeof console !== 'undefined') {
+  console.warn(`KHADMA: Missing Firebase config keys: ${missingConfig.join(', ')}`);
+}
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);

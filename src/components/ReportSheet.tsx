@@ -2,18 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../lib/i18n';
 import { AlreadyReportedError, reportGig } from '../lib/db';
 import { REPORT_REASONS } from '../lib/constants';
+import { readStringList, writeStringList } from '../lib/storage';
 import type { ReportReason } from '../lib/types';
 
 const REPORTED_KEY = 'khadma-reported';
-
-function getReported(): string[] {
-  try {
-    const arr = JSON.parse(localStorage.getItem(REPORTED_KEY) || '[]');
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
 
 export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => void }) {
   const { t } = useLang();
@@ -21,7 +13,7 @@ export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => 
   const [reason, setReason] = useState<ReportReason | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  const [already, setAlready] = useState(() => getReported().includes(gigId));
+  const [already, setAlready] = useState(() => readStringList(REPORTED_KEY).includes(gigId));
   const [err, setErr] = useState('');
 
   useEffect(() => {
@@ -34,9 +26,9 @@ export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => 
   }, [busy, onClose]);
 
   const markReportedLocally = () => {
-    const cur = getReported();
+    const cur = readStringList(REPORTED_KEY);
     if (!cur.includes(gigId)) {
-      localStorage.setItem(REPORTED_KEY, JSON.stringify([...cur, gigId]));
+      writeStringList(REPORTED_KEY, [...cur, gigId]);
     }
   };
 

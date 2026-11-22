@@ -9,6 +9,7 @@
   - `Admin.tsx`: Added localized `aria-label={t('common.refresh')}` to the icon-only refresh button.
 - **`WhatsAppButton` Mobile/Desktop Navigation (`FIXED & VERIFIED`):** Uses `window.location.assign(waUrl)` directly on coarse-pointer mobile devices (opening WhatsApp via App Links / Universal Links without popup blocking) and opens a blank tab synchronously on desktop (`popup.opener = null`, then `popup.location.replace(waUrl)`) to avoid desktop Safari double-navigation.
 
-## Remaining Low-Priority UI Finding (Deferred)
+- **`UX-003` (`FIXED & VERIFIED`):** Converted `Admin` login and all three `PostGig` steps (`verify`, `code`, `form`) to semantic `<form onSubmit>` containers with `type="submit"` primary buttons and explicit `type="button"` secondary controls; Enter-key submission verified in Playwright E2E (`tests/e2e/khadma.spec.ts`).
 
-- **`UX-003` (Low):** `Admin` login and `PostGig` steps use `<div>` instead of `<form onSubmit>` (no Enter-key submission).
+## Remaining Open UI Findings
+- None.

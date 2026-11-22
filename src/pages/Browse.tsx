@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { useLang } from '../lib/i18n';
-import { CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
+import { BROWSE_PAGE_SIZE, CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
 import { getActiveGigsPage } from '../lib/db';
 import { formatNeighborhood } from '../lib/format';
 import type { Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
 import { GigCard } from '../components/GigCard';
-
-const PAGE = 50;
 
 export function Browse() {
   const { t } = useLang();
@@ -26,7 +24,7 @@ export function Browse() {
     setLoading(true);
     setError('');
     const tryLoad = () => {
-      getActiveGigsPage(null, PAGE)
+      getActiveGigsPage(null, BROWSE_PAGE_SIZE)
         .then(({ gigs: items, lastDoc: nextLast }) => {
           if (cancelled) return;
           setGigs(items);
@@ -57,7 +55,7 @@ export function Browse() {
     if (!lastDoc || loadingMore) return;
     setLoadingMore(true);
     try {
-      const { gigs: items, lastDoc: nextLast } = await getActiveGigsPage(lastDoc, PAGE);
+      const { gigs: items, lastDoc: nextLast } = await getActiveGigsPage(lastDoc, BROWSE_PAGE_SIZE);
       setGigs((g) => [...g, ...items]);
       setLastDoc(nextLast);
     } catch {
@@ -107,6 +105,11 @@ export function Browse() {
           </button>
         )}
       </div>
+      {(cat || neigh) && lastDoc && !loading && (
+        <p className="muted small" role="status">
+          {t('browse.filterPartial', { loaded: gigs.length })}
+        </p>
+      )}
 
       {loading ? (
         <p className="muted center">{t('common.loading')}</p>

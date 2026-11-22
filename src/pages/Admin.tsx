@@ -71,7 +71,13 @@ export function Admin() {
     return (
       <div className="page">
         <h1 className="page-title">{t('admin.title')}</h1>
-        <div className="detail-card">
+        <form
+          className="detail-card"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy && email && password) void login();
+          }}
+        >
           <h2 className="sheet-title">{t('admin.loginTitle')}</h2>
           <label className="field">
             <span>{t('admin.emailLabel')}</span>
@@ -92,10 +98,10 @@ export function Admin() {
             />
           </label>
           {authErr && <p className="form-error">{authErr}</p>}
-          <button className="btn btn-primary wide" onClick={login} disabled={busy || !email || !password}>
+          <button type="submit" className="btn btn-primary wide" disabled={busy || !email || !password}>
             {busy ? t('common.loading') : t('admin.login')}
           </button>
-        </div>
+        </form>
       </div>
     );
   }

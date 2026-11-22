@@ -34,10 +34,10 @@ export function GigDetail() {
 
   useEffect(() => {
     const st = (window.history.state as { usr?: { justPosted?: boolean } } | null)?.usr;
-    if (st?.justPosted) {
-      setJustPosted(true);
-      setTimeout(() => setJustPosted(false), 5000);
-    }
+    if (!st?.justPosted) return;
+    setJustPosted(true);
+    const timer = window.setTimeout(() => setJustPosted(false), 5000);
+    return () => window.clearTimeout(timer);
   }, []);
 
   if (missing) {

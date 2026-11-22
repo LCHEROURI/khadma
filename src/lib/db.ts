@@ -18,8 +18,9 @@ import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../firebase';
 import type { Gig, GigStatus, ReportReason } from './types';
-import { BROWSE_LIMIT, MAX_ACTIVE_GIGS } from './constants';
+import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
 import { SAMPLE_GIGS } from './samples';
+import { readStringList, writeStringList } from './storage';
 
 export class RateLimitError extends Error {
   constructor() {
@@ -37,7 +38,7 @@ export class AlreadyReportedError extends Error {
 
 export async function getActiveGigsPage(
   after: QueryDocumentSnapshot<DocumentData> | null = null,
-  pageSize = 50
+  pageSize = BROWSE_PAGE_SIZE
 ): Promise<{ gigs: Gig[]; lastDoc: QueryDocumentSnapshot<DocumentData> | null; hasMore: boolean }> {
   const q = after
     ? query(
@@ -184,9 +185,9 @@ export async function getAdminQueue(): Promise<{ latest: Gig[]; flagged: Gig[] }
     where('flags', '>', 0),
     orderBy('flags', 'asc'),
     orderBy('createdAt', 'desc'),
-    limit(BROWSE_LIMIT)
+    limit(ADMIN_QUEUE_LIMIT)
   );
-  const latestQ = query(collection(db, 'gigs'), orderBy('createdAt', 'desc'), limit(BROWSE_LIMIT));
+  const latestQ = query(collection(db, 'gigs'), orderBy('createdAt', 'desc'), limit(ADMIN_QUEUE_LIMIT));
   const [fs, ls] = await Promise.all([getDocs(flaggedQ), getDocs(latestQ)]);
   const flagged = fs.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
   const latest = ls.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
@@ -274,7 +275,7 @@ export async function seedSamples(): Promise<void> {
 }
 
 export async function removeAllSamples(): Promise<number> {
-  const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(BROWSE_LIMIT));
+  const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(ADMIN_QUEUE_LIMIT));
   const snap = await getDocs(q);
   const toRemove = snap.docs.filter((d) => d.data().status !== 'removed');
   for (let i = 0; i < toRemove.length; i += BATCH_LIMIT) {
@@ -292,20 +293,14 @@ export async function removeAllSamples(): Promise<number> {
 const SAVED_KEY = 'khadma-saved';
 
 export function getSavedIds(): string[] {
-  try {
-    const raw = localStorage.getItem(SAVED_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
-  } catch {
-    return [];
-  }
+  return readStringList(SAVED_KEY);
 }
 
 export function toggleSaved(id: string): boolean {
   const cur = getSavedIds();
   const has = cur.includes(id);
   const next = has ? cur.filter((x) => x !== id) : [...cur, id];
-  localStorage.setItem(SAVED_KEY, JSON.stringify(next));
+  writeStringList(SAVED_KEY, next);
   return !has;
 }
 

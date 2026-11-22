@@ -158,7 +158,13 @@ export function PostGig() {
       ) : null}
 
       {!authLoading && step === 'verify' && (
-        <div className="panel">
+        <form
+          className="panel"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy && phoneInput.trim()) void sendCode();
+          }}
+        >
           <h2>{t('post.verifyTitle')}</h2>
           <p className="muted">{t('post.verifyText')}</p>
           <label className="field">
@@ -173,14 +179,20 @@ export function PostGig() {
             />
           </label>
           {err && <p className="form-error">{err}</p>}
-          <button className="btn btn-primary btn-block" onClick={sendCode} disabled={busy || !phoneInput.trim()}>
+          <button type="submit" className="btn btn-primary btn-block" disabled={busy || !phoneInput.trim()}>
             {busy ? t('common.loading') : t('post.sendCode')}
           </button>
-        </div>
+        </form>
       )}
 
       {step === 'code' && (
-        <div className="panel">
+        <form
+          className="panel"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy && code.trim().length >= 4) void confirmCode();
+          }}
+        >
           <h2>{t('post.codeTitle')}</h2>
           <p className="muted">{t('post.codeText', { phone })}</p>
           <label className="field">
@@ -194,22 +206,28 @@ export function PostGig() {
             />
           </label>
           {err && <p className="form-error">{err}</p>}
-          <button className="btn btn-primary btn-block" onClick={confirmCode} disabled={busy || code.trim().length < 4}>
+          <button type="submit" className="btn btn-primary btn-block" disabled={busy || code.trim().length < 4}>
             {busy ? t('common.loading') : t('post.confirm')}
           </button>
           <div className="sheet-actions">
-            <button className="btn btn-ghost" onClick={sendCode} disabled={busy || !phone}>
+            <button type="button" className="btn btn-ghost" onClick={sendCode} disabled={busy || !phone}>
               {t('post.resend')}
             </button>
-            <button className="btn btn-ghost" onClick={changeNumber} disabled={busy}>
+            <button type="button" className="btn btn-ghost" onClick={changeNumber} disabled={busy}>
               {t('post.changeNumber')}
             </button>
           </div>
-        </div>
+        </form>
       )}
 
       {step === 'form' && (
-        <div className="panel">
+        <form
+          className="panel"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy) void submit();
+          }}
+        >
           <div className="verified-banner">
             <span>✓</span>
             {t('post.verifiedAs', { phone })}
@@ -268,15 +286,15 @@ export function PostGig() {
             <p className="field-hint">{t('post.whatsappNote')}</p>
           </label>
           {err && <p className="form-error">{err}</p>}
-          <button className="btn btn-primary btn-block" onClick={submit} disabled={busy}>
+          <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
             {busy ? t('common.loading') : t('post.submit')}
           </button>
           <div className="center">
-            <button className="btn btn-ghost" onClick={changeNumber}>
+            <button type="button" className="btn btn-ghost" onClick={changeNumber}>
               {t('post.changeNumber')}
             </button>
           </div>
-        </div>
+        </form>
       )}
     </div>
   );
