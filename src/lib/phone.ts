@@ -11,11 +11,6 @@ export function normalizeDzPhone(input: string): string | null {
   return d;
 }
 
-// Privacy-safe server redirect URL for WhatsApp contact (keeps posterPhone out of public Firestore reads).
-export function gigContactLink(gigId: string, lang: string): string {
-  return `/api/contact/${encodeURIComponent(gigId)}?lang=${encodeURIComponent(lang)}`;
-}
-
 // wa.me link (number without '+').
 export function waLink(e164: string, text: string): string {
   return `https://wa.me/${e164.replace(/^\+/, '')}?text=${encodeURIComponent(text)}`;

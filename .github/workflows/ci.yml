@@ -44,8 +44,8 @@ jobs:
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || 'ci-placeholder-key' }}
         run: npm run build
 
-      - name: Run unit tests
-        run: npm run test:unit
+      - name: Run unit & security tests
+        run: npm run test:unit && npm run test:security
 
       - name: Install Firebase CLI & run Firestore Security Rules tests
         run: |

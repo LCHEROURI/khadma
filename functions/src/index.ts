@@ -1,70 +1,87 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { onRequest } from 'firebase-functions/v2/https';
+import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import {
+  ContactHandlerError,
+  evaluateRateBucket,
+  handleGetGigContactLink,
+  type ContactStore,
+  type RateBucket
+} from './contactHandler.js';
 
 initializeApp();
 const db = getFirestore();
 
-const WA_MESSAGES: Record<string, string> = {
-  dar: 'Salam 👋 Choftek 3la KHADMA, 7abbit nse9sik 3la li3lan.',
-  fr: 'Bonjour 👋 Je vous contacte via KHADMA au sujet de votre annonce.',
-  ar: 'سلام 👋 تواصلت معك عبر خدامة بخصوص إعلانك.'
+const firestoreStore: ContactStore = {
+  async getGig(gigId: string) {
+    const snap = await db.collection('gigs').doc(gigId).get();
+    return snap.exists ? (snap.data() ?? null) : null;
+  },
+  async getContactPhone(gigId: string) {
+    const snap = await db.collection('gigContacts').doc(gigId).get();
+    const phone = snap.exists ? snap.data()?.posterPhone : null;
+    return typeof phone === 'string' ? phone : null;
+  },
+  async checkAndConsumeRateLimit(bucketKey, gigId, maxPerWindow, windowMs, nowMs) {
+    const ref = db.collection('contactRateLimits').doc(bucketKey);
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const existing: RateBucket | null = snap.exists
+        ? {
+            gigIds: Array.isArray(snap.data()?.gigIds) ? (snap.data()?.gigIds as string[]) : [],
+            windowStartMs:
+              typeof snap.data()?.windowStartMs === 'number'
+                ? (snap.data()?.windowStartMs as number)
+                : 0
+          }
+        : null;
+      const { allowed, nextBucket } = evaluateRateBucket(
+        existing,
+        gigId,
+        maxPerWindow,
+        windowMs,
+        nowMs
+      );
+      if (allowed) {
+        tx.set(ref, {
+          gigIds: nextBucket.gigIds,
+          windowStartMs: nextBucket.windowStartMs,
+          updatedAtMs: nowMs
+        });
+      }
+      return allowed;
+    });
+  }
 };
 
-const GIG_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+export const CONTACT_FUNCTION_OPTIONS = {
+  region: 'europe-west1',
+  enforceAppCheck: true,
+  maxInstances: 20
+} as const;
 
 /**
- * Privacy-safe WhatsApp handoff endpoint: GET /api/contact/:gigId?lang=dar|fr|ar
- * Keeps posterPhone out of public Firestore reads while preserving 1-tap wa.me UX.
+ * Authenticated, App-Check-protected, rate-limited WhatsApp contact handoff.
+ * Replaces the old public GET /api/contact/:gigId 302 redirect.
  */
-export const contactGig = onRequest(
-  { region: 'europe-west1', invoker: 'public', maxInstances: 20 },
-  async (req, res) => {
-    res.set('Cache-Control', 'no-store');
-    res.set('Referrer-Policy', 'no-referrer');
+export const getGigContactLink = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
+  const forwarded = request.rawRequest?.headers?.['x-forwarded-for'];
+  const forwardedIp =
+    typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : Array.isArray(forwarded) ? forwarded[0] : null;
+  const clientIp = forwardedIp || request.rawRequest?.ip || null;
 
-    if (req.method !== 'GET') {
-      res.status(405).send('Method Not Allowed');
-      return;
+  try {
+    return await handleGetGigContactLink(firestoreStore, {
+      authUid: request.auth?.uid ?? null,
+      hasAppCheck: Boolean(request.app),
+      clientIp,
+      gigId: (request.data as { gigId?: unknown } | null)?.gigId,
+      lang: (request.data as { lang?: unknown } | null)?.lang
+    });
+  } catch (err) {
+    if (err instanceof ContactHandlerError) {
+      throw new HttpsError(err.code, err.message);
     }
-
-    const segments = req.path.split('/').filter(Boolean);
-    const gigId = segments[segments.length - 1] ?? '';
-    if (!GIG_ID_RE.test(gigId)) {
-      res.status(400).send('Invalid gig ID');
-      return;
-    }
-
-    try {
-      const gigSnap = await db.collection('gigs').doc(gigId).get();
-      if (!gigSnap.exists) {
-        res.status(404).send('Listing not found');
-        return;
-      }
-      const gig = gigSnap.data();
-      if (!gig || gig.status !== 'active' || gig.isSample === true) {
-        res.status(404).send('Contact unavailable');
-        return;
-      }
-
-      // Prefer private gigContacts/{gigId}; fall back to legacy gigs/{gigId}.posterPhone
-      // until an approved migration moves existing live documents.
-      const contactSnap = await db.collection('gigContacts').doc(gigId).get();
-      const rawPhone =
-        (contactSnap.exists ? (contactSnap.data()?.posterPhone as string | undefined) : undefined) ??
-        (typeof gig.posterPhone === 'string' ? gig.posterPhone : undefined);
-
-      if (!rawPhone || !/^\+213[567]\d{8}$/.test(rawPhone)) {
-        res.status(404).send('Contact unavailable');
-        return;
-      }
-
-      const langParam = typeof req.query.lang === 'string' ? req.query.lang : 'dar';
-      const msg = WA_MESSAGES[langParam] ?? WA_MESSAGES.dar;
-      const waUrl = `https://wa.me/${rawPhone.replace(/^\+/, '')}?text=${encodeURIComponent(msg)}`;
-      res.redirect(302, waUrl);
-    } catch {
-      res.status(500).send('Internal Server Error');
-    }
+    throw new HttpsError('internal', 'Internal Server Error');
   }
-);
+});

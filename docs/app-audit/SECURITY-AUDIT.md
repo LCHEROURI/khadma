@@ -1,21 +1,34 @@
-# Stage 05 — Tenant & Application Security Audit (Updated After High-Priority Repairs)
+# Stage 05 — Tenant & Application Security Audit (Option A Implemented)
 
-## High-Priority Security Fix (`SEC-001`) & Rules Verification (`SEC-003`)
+## `SEC-001` Status: **OPEN (OPTION A IMPLEMENTED — PENDING LIVE APP CHECK & DEPLOY VERIFICATION)**
 
-1. **Privacy-Safe Phone Contact Architecture (`SEC-001`):**
-   - Removed `posterPhone` and `counterId` from all new public `gigs/{gigId}` writes (`src/lib/db.ts`, `firestore.rules`).
-   - Added private collection `gigContacts/{gigId}` (`allow read: if isAdmin();`) written atomically in the same transaction as `postGig()`.
-   - Added 2nd Gen Cloud Function `contactGig` (`functions/src/index.ts`, region `europe-west1`) wired to `/api/contact/:gigId?lang=...` in `firebase.json`. It validates `status === 'active' && !isSample`, reads `gigContacts/{gigId}` (with fallback to legacy `gigs/{gigId}.posterPhone` until an approved migration runs), and returns `302` to `wa.me` with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
-   - Added dry-run-by-default migration helper `scripts/migrate-gig-contacts.mjs` (not executed against live data).
-2. **Automated Positive & Negative Security Rules Verification (`SEC-003`):**
-   - Executed `npm run test:rules` (`firebase emulators:exec --only firestore --project demo-khadma "vitest run tests/rules"`): **4/4 suites PASS (exit code 0)**:
-     - Public read of `active` gig: **ALLOW**; `hidden`/`removed` gig & `gigContacts`: **DENY**
-     - Transactional `+1` counter post: **ALLOW**; counter-skip bypass, 6th gig (`count=6`), and `posterPhone` on public `gigs`: **DENY**
-     - Deterministic `reports/{gigId}_{uid}` 1st/2nd/3rd auto-hide: **ALLOW**; duplicate report by same UID and flag update without report doc: **DENY**
-     - Unverified `cherouri@gmail.com`: **DENY**; verified `cherouri@gmail.com`: **ALLOW**
-   - `firebase deploy --only firestore:rules --dry-run`: **PASS**.
+### Implemented Controls (Option A — Approved)
+1. **Public GET Redirect Removed:**
+   - Deleted `/api/contact/**` Hosting rewrite from `firebase.json`.
+   - Replaced unauthenticated `onRequest` `contactGig` with 2nd Gen Callable Function `getGigContactLink` (`functions/src/index.ts`, `functions/src/contactHandler.ts`) using `onCall({ region: 'europe-west1', enforceAppCheck: true, maxInstances: 20 })`.
+2. **Firebase App Check + Firebase Auth + Dual Sliding-Window Rate Limiting:**
+   - **App Check:** Client initializes `ReCaptchaV3Provider` when `VITE_RECAPTCHA_SITE_KEY` is configured (`src/firebase.ts`); server enforces `enforceAppCheck: true` and checks `Boolean(request.app)`.
+   - **Authentication:** Client silently signs in via Firebase Anonymous Auth if unauthenticated (`src/lib/db.ts:requestGigContactLink`); server rejects missing `request.auth?.uid` with `unauthenticated`.
+   - **Server-Side Rate Limiting:** Atomic Firestore transactions in server-only `contactRateLimits/{key}` (explicit `allow read, write: if false;` in `firestore.rules`) enforce:
+     - **Per-UID cap:** max `8` unique gig contact reveals per rolling 60-minute window (idempotent re-taps on the same gig do not consume extra slots).
+     - **Per-IP cap:** max `15` unique gig contact reveals per SHA-256 IP hash per rolling 60-minute window (blocks anonymous UID-cycling Sybil scraping from a single IP).
+3. **1-Tap WhatsApp UX Preserved:**
+   - `WhatsAppButton.tsx` invokes `requestGigContactLink(gigId, lang)` on tap and opens `waUrl` via `window.open(..., '_blank', 'noopener,noreferrer')` with mobile `window.location.assign(waUrl)` fallback.
+
+### Remaining Residual Phone-Number Exposure Risk (Why `SEC-001` Stays Open Until Live Verification)
+- **Live enforcement not yet active:** App Check (`VITE_RECAPTCHA_SITE_KEY` + Firebase Console reCAPTCHA v3 registration) and `getGigContactLink` are not yet deployed to `khadma-oran`.
+- **Inherent residual risk of direct `wa.me` handoff:** Because WhatsApp chat opens on the applicant's device via `https://wa.me/{e164}`, a legitimate user — or a sophisticated distributed residential-proxy botnet that passes reCAPTCHA v3 and stays below the per-IP/UID rate limits — will still receive the target poster's E.164 phone number upon tapping Contact. Eliminating even this residual exposure would require a server-relayed WhatsApp Business Cloud API (Option B, paid per-conversation).
+- **Pre-migration legacy documents:** Existing live `gigs/{id}` documents in `khadma-oran` still retain legacy `posterPhone`/`counterId` fields until `scripts/migrate-gig-contacts.mjs --apply` is explicitly approved and run.
+
+## Automated Security & Rules Verification
+
+| Suite | Command | Result | Verified Scenarios |
+|---|---|---|---|
+| Contact Security Tests | `npm run test:security` | **PASS** (`7 / 7`) | Old `/api/contact` rewrite removed; `enforceAppCheck: true` & `onCall` verified; App Check bypass blocked (`failed-precondition`); Auth bypass blocked (`unauthenticated`); hidden/removed/sample/missing gig blocked (`not-found`); per-UID rate limit (`8/hr`) + idempotent re-tap + post-window reset; per-IP anonymous-UID-cycling Sybil bypass (`15/hr`) blocked (`resource-exhausted`) |
+| Firestore Security Rules | `npm run test:rules` | **PASS** (`4 / 4`) | Active vs. hidden/removed reads; `gigContacts` admin-only; `contactRateLimits` denied to all clients including admin; strict `+1` counter cap (`<= 5`); `posterPhone` blocked on public `gigs`; deterministic 1-report-per-UID + 3-report auto-hide; unverified vs. verified admin email |
+| Rules Dry-Run Compile | `firebase deploy --only firestore:rules --dry-run` | **PASS** | Compiled cleanly against `khadma-oran` |
 
 ## Remaining Medium/Low Security Items (Deferred)
 
 - `SEC-002` (Medium): Anonymous Auth Sybil risk on 3-report auto-hide.
-- `SEC-004` (Low): Firebase App Check not enabled.
+- `SEC-004` (Low): Live App Check activation in Firebase Console (code wired; console registration + `VITE_RECAPTCHA_SITE_KEY` secret required before deploy).

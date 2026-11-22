@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gigContactLink, normalizeDzPhone, waLink } from '../../src/lib/phone';
+import { normalizeDzPhone, waLink } from '../../src/lib/phone';
 
 describe('normalizeDzPhone', () => {
   it('normalizes valid Algerian mobile formats to E.164', () => {
@@ -22,11 +22,6 @@ describe('normalizeDzPhone', () => {
 });
 
 describe('contact links', () => {
-  it('builds privacy-safe server contact redirect URL', () => {
-    expect(gigContactLink('gig_123', 'dar')).toBe('/api/contact/gig_123?lang=dar');
-    expect(gigContactLink('gig 1', 'ar')).toBe('/api/contact/gig%201?lang=ar');
-  });
-
   it('builds wa.me URL without leading plus', () => {
     expect(waLink('+213550123456', 'Salam')).toBe('https://wa.me/213550123456?text=Salam');
   });

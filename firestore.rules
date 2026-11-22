@@ -41,6 +41,13 @@ rules_version = '2';
 //   - reporterId: string (required, == request.auth.uid)
 //   - createdAt: timestamp (required, == request.time on create)
 //
+// Collection: contactRateLimits (server-only — Admin SDK exclusively; all client access denied)
+// Document ID: {limitId} (rate-limit bucket key)
+// Fields:
+//   - gigIds: list<string>
+//   - windowStartMs: int
+//   - updatedAtMs: int
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -214,6 +221,11 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time;
 
       allow update, delete: if isAdmin();
+    }
+
+    match /contactRateLimits/{limitId} {
+      // Server-only rate-limiting buckets managed exclusively by Cloud Functions Admin SDK.
+      allow read, write: if false;
     }
   }
 }

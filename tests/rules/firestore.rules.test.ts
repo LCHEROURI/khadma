@@ -233,5 +233,12 @@ describe('KHADMA Firestore Security Rules', () => {
     await assertSucceeds(getDoc(doc(verifiedAdmin, 'gigs', 'g1')));
     await assertSucceeds(getDoc(doc(verifiedAdmin, 'gigContacts', 'g1')));
     await assertSucceeds(updateDoc(doc(verifiedAdmin, 'gigs', 'g1'), { status: 'active', flags: 0 }));
+
+    // Server-only contactRateLimits must be denied to all clients (including admin)
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const phoneDb = testEnv.authenticatedContext('p1', { phone_number: PHONE }).firestore();
+    await assertFails(getDoc(doc(anonDb, 'contactRateLimits', 'uid_p1')));
+    await assertFails(setDoc(doc(phoneDb, 'contactRateLimits', 'uid_p1'), { gigIds: [], windowStartMs: 0 }));
+    await assertFails(setDoc(doc(verifiedAdmin, 'contactRateLimits', 'uid_p1'), { gigIds: [], windowStartMs: 0 }));
   });
 });

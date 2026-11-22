@@ -15,7 +15,11 @@ All five High-Priority findings (`BUG-001`, `SEC-001`, `QUAL-001`, `E2E-001`, `O
 | `npm run test:rules` | **PASS** | `4 / 4` Firestore Emulator suites passed (`1.05s`) |
 | `npm run test:e2e` | **PASS** | `5 / 5` Playwright mobile Chromium tests passed (`3.2s`) |
 | `firebase deploy --only firestore:rules --dry-run` | **PASS** | Compiled cleanly against `khadma-oran` |
-| GitHub Actions CI run | **NOT VERIFIED** | `.github/workflows/ci.yml` created; will execute upon branch push |
+| GitHub Actions CI run | **PASS** | Run `45077805211` (`verify` job `137378865142`): all steps `success` |
+
+### Remaining High-Priority Blocker Before Broad Public Launch
+
+- **`SEC-001` remains `OPEN (OPTION A IMPLEMENTED — PENDING LIVE VERIFICATION)`:** Old public `GET /api/contact/**` redirect is removed and replaced with `getGigContactLink` (`onCall` + `enforceAppCheck: true` + Auth + dual per-UID/IP rate limits; `7/7` security tests PASS). Remains open until App Check (`VITE_RECAPTCHA_SITE_KEY`) and Cloud Functions are deployed and verified live, and legacy `gigs` docs are migrated. Residual direct `wa.me` exposure is documented in `SECURITY-AUDIT.md`.
 
 ### Mandatory Conditions Before Production Deployment
 

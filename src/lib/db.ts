@@ -16,7 +16,8 @@ import {
   type QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
-import { auth, db } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from '../firebase';
 import type { Gig, GigStatus, ReportReason } from './types';
 import { BROWSE_LIMIT, HIDE_AFTER_REPORTS, MAX_ACTIVE_GIGS } from './constants';
 import { SAMPLE_GIGS } from './samples';
@@ -124,6 +125,23 @@ export async function getRemainingForPhone(phone: string): Promise<number> {
   const snap = await getDoc(doc(db, 'phoneCounters', phone));
   if (!snap.exists()) return MAX_ACTIVE_GIGS;
   return Math.max(0, MAX_ACTIVE_GIGS - (snap.data().count as number));
+}
+
+// ---------- Contact (App Check + Auth + Server-Side Rate Limit) ----------
+
+export async function requestGigContactLink(gigId: string, lang: string): Promise<string> {
+  if (!auth.currentUser) {
+    await signInAnonymously(auth);
+  }
+  if (!auth.currentUser) throw new Error('NO_AUTH');
+
+  const call = httpsCallable<{ gigId: string; lang: string }, { waUrl: string }>(
+    functions,
+    'getGigContactLink'
+  );
+  const res = await call({ gigId, lang });
+  if (!res.data?.waUrl) throw new Error('NO_CONTACT');
+  return res.data.waUrl;
 }
 
 // ---------- Report ----------
