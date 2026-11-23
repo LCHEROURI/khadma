@@ -100,7 +100,7 @@ const dar: Dict = {
   'post.verifiedAs': 'Ra9mek mwathaq: {phone}',
   'post.formTitle': 'Kteb li3lan',
   'post.titleLabel': 'El 3onwan',
-  'post.titlePlaceholder': 'Ex: Nlawwej 3la peindre — Bir El Djir',
+  'post.titlePlaceholder': 'Ex: Nlawwej 3la peintre — Bir El Djir',
   'post.categoryLabel': 'Catégorie',
   'post.descriptionLabel': 'El wasf',
   'post.descriptionPlaceholder': 'Chkoun thebb, fin, w9tach, ch7al...',
@@ -162,7 +162,7 @@ const dar: Dict = {
   'common.loading': 'Sannay...',
   'common.currency': 'DZD',
   'common.refresh': 'Actualisi',
-  'common.error': 'Sar mochkil. Jarreb men 9bel.',
+  'common.error': 'Sar mochkil. 3awed jarreb.',
   'common.retry': '3awed',
   'common.loadError': 'Ma t9ednach njibou el data. Checki l’internet.',
   'wa.message': 'Salam 👋 Choftek 3la KHADMA, 7abbit nse9sik 3la li3lan.'

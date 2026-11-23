@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { useLang } from '../lib/i18n';
 import { BROWSE_PAGE_SIZE, CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
@@ -118,6 +119,11 @@ export function Browse() {
       ) : filtered.length === 0 ? (
         <div className="empty">
           <p>{gigs.length === 0 ? t('browse.emptyNoGigs') : t('browse.empty')}</p>
+          {gigs.length === 0 && (
+            <Link to="/post" className="btn btn-primary">
+              {t('nav.post')}
+            </Link>
+          )}
         </div>
       ) : (
         <div className="card-list">
