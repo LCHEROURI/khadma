@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { sendEmailVerification, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
 import { ADMIN_EMAIL } from '../lib/constants';
+import { createAdminQueueController, type AdminQueueController } from '../lib/adminQueue';
 import { adminApprove, adminRemove, getAdminQueue, hasSamples, removeAllSamples, seedSamples } from '../lib/db';
 import { formatNeighborhood, formatPay } from '../lib/format';
 import type { Gig } from '../lib/types';
@@ -23,21 +24,39 @@ export function Admin() {
   const [notice, setNotice] = useState('');
   const [verifySent, setVerifySent] = useState(false);
 
+  const errorMessageRef = useRef(() => t('common.error'));
+  errorMessageRef.current = () => t('common.error');
+
+  const controllerRef = useRef<AdminQueueController | null>(null);
+
+  useEffect(() => {
+    const controller = createAdminQueueController({
+      fetchQueue: getAdminQueue,
+      fetchHasSamples: hasSamples,
+      onLatest: setLatest,
+      onFlagged: setFlagged,
+      onSamples: setSamples,
+      onNotice: setNotice,
+      onBusy: setBusy,
+      getErrorMessage: () => errorMessageRef.current()
+    });
+    controllerRef.current = controller;
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, []);
+
   const refresh = () => {
-    getAdminQueue()
-      .then(({ latest: l, flagged: f }) => {
-        setLatest(l);
-        setFlagged(f);
-      })
-      .catch(() => setNotice(t('common.error')));
-    hasSamples()
-      .then(setSamples)
-      .catch(() => {});
+    void controllerRef.current?.refresh();
   };
 
   useEffect(() => {
-    if (isAdmin) refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (isAdmin) {
+      void controllerRef.current?.refresh();
+    } else {
+      controllerRef.current?.invalidate();
+    }
   }, [isAdmin]);
 
   const login = async () => {
@@ -54,9 +73,8 @@ export function Admin() {
   };
 
   const logout = async () => {
+    controllerRef.current?.invalidate();
     await signOut(auth);
-    setLatest(null);
-    setFlagged(null);
   };
 
   if (authLoading) {
@@ -173,17 +191,8 @@ export function Admin() {
     );
   }
 
-  const act = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    try {
-      await fn();
-      setNotice('');
-      refresh();
-    } catch {
-      setNotice(t('common.error'));
-    } finally {
-      setBusy(false);
-    }
+  const act = (fn: () => Promise<void>) => {
+    void controllerRef.current?.runAction(fn);
   };
 
   const rows = tab === 'flagged' ? flagged : latest;
