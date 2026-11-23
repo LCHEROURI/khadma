@@ -95,4 +95,28 @@ test.describe('KHADMA V1.2 critical mobile user journeys', () => {
     await expect(page.locator('input[type="email"]')).toBeVisible();
     await expect(page.locator('input[type="password"]')).toBeVisible();
   });
+
+  test('supports bounded search, active filter chips, and filter reset in French LTR and Arabic RTL', async ({ page }) => {
+    await page.goto('/jobs');
+    const searchInput = page.locator('#browse-search-input');
+    await expect(searchInput).toBeVisible();
+
+    await searchInput.fill('peintre');
+    await page.locator('.filters select').first().selectOption('construction');
+    await expect(page.locator('.active-filters')).toBeVisible();
+    await expect(page.locator('.active-filters-badge')).toContainText('2');
+    await expect(page.locator('.filter-pill')).toHaveCount(2);
+
+    // Clear search using the clear button
+    await page.locator('.search-clear').click();
+    await expect(searchInput).toHaveValue('');
+    await expect(page.locator('.filter-pill')).toHaveCount(1);
+
+    // Switch to Arabic RTL and verify filter chip + reset works cleanly
+    await page.locator('.lang-toggle').getByRole('button', { name: 'العربية' }).click();
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await expect(page.locator('.active-filters')).toBeVisible();
+    await page.locator('.active-filters .link-btn').click();
+    await expect(page.locator('.active-filters')).toHaveCount(0);
+  });
 });

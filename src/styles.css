@@ -1327,3 +1327,170 @@ textarea {
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================================
+   KHADMA V1.3: Search, Active Filter Chips & Employer Status UI
+   ============================================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--s-3);
+}
+
+.search-icon {
+  position: absolute;
+  inset-inline-start: 12px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--s-2) 44px var(--s-2) 40px;
+  padding-inline-start: 40px;
+  padding-inline-end: 44px;
+  border: 1px solid var(--brand-border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--fs-base);
+}
+
+.search-input:focus-visible,
+.filter select:focus-visible,
+.btn:focus-visible,
+.filter-pill:focus-visible,
+.status-tab:focus-visible,
+.type-pill:focus-visible,
+.home-legacy-link:focus-visible {
+  outline: 2px solid var(--brand-dark);
+  outline-offset: 2px;
+}
+
+.search-clear {
+  position: absolute;
+  inset-inline-end: 0;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 20px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-md);
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+
+.active-filters-badge {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--brand-dark);
+}
+
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-border);
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.employer-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.btn-icon-only {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: var(--s-3) 0;
+}
+
+.status-tab {
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-border);
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.status-tab.active {
+  background: var(--brand);
+  color: #ffffff;
+  border-color: var(--brand-dark);
+}
+
+.status-badge-active {
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+}
+
+.status-badge-hidden {
+  background: var(--banner-bg);
+  color: var(--banner-ink);
+}
+
+.status-badge-removed {
+  background: var(--red-soft);
+  color: var(--red-dark);
+}
+
+.employer-note {
+  margin-top: var(--s-4);
+  text-align: center;
+}
+
+.load-more-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+}
