@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { useLang } from '../lib/i18n';
@@ -6,70 +6,63 @@ import { BROWSE_PAGE_SIZE, CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
 import { getActiveGigsPage } from '../lib/db';
 import { formatNeighborhood } from '../lib/format';
 import { filterGigsByMode, type BrowseMode } from '../lib/listingType';
+import {
+  createBrowsePaginationController,
+  type BrowsePaginationController,
+  type BrowsePaginationState
+} from '../lib/browsePagination';
 import { countActiveFilters, filterListings } from '../lib/search';
-import type { Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
 import { GigCard } from '../components/GigCard';
 import { Icon } from '../components/Icon';
 
+type Cursor = QueryDocumentSnapshot<DocumentData>;
+
+const INITIAL_PAGINATION_STATE: BrowsePaginationState<Cursor> = {
+  gigs: [],
+  lastDoc: null,
+  loading: true,
+  loadingMore: false,
+  initialError: '',
+  loadMoreError: ''
+};
+
 export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
   const { t } = useLang();
-  const [gigs, setGigs] = useState<Gig[]>([]);
-  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState('');
-  const [reloadTick, setReloadTick] = useState(0);
+  const [pageState, setPageState] = useState<BrowsePaginationState<Cursor>>(INITIAL_PAGINATION_STATE);
   const [searchQuery, setSearchQuery] = useState('');
   const [cat, setCat] = useState('');
   const [neigh, setNeigh] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    let attempts = 0;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    setLoading(true);
-    setError('');
-    const tryLoad = () => {
-      getActiveGigsPage(null, BROWSE_PAGE_SIZE)
-        .then(({ gigs: items, lastDoc: nextLast }) => {
-          if (cancelled) return;
-          setGigs(items);
-          setLastDoc(nextLast);
-          setLoading(false);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          attempts += 1;
-          if (attempts < 4) {
-            retryTimer = setTimeout(tryLoad, 3000);
-          } else {
-            setError(t('common.loadError'));
-            setLoading(false);
-          }
-        });
-    };
-    tryLoad();
-    return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadTick]);
+  const initialErrRef = useRef(() => t('common.loadError'));
+  initialErrRef.current = () => t('common.loadError');
+  const loadMoreErrRef = useRef(() => t('browse.loadMoreError'));
+  loadMoreErrRef.current = () => t('browse.loadMoreError');
 
-  const loadMore = async () => {
-    if (!lastDoc || loadingMore) return;
-    setLoadingMore(true);
-    setError('');
-    try {
-      const { gigs: items, lastDoc: nextLast } = await getActiveGigsPage(lastDoc, BROWSE_PAGE_SIZE);
-      setGigs((g) => [...g, ...items]);
-      setLastDoc(nextLast);
-    } catch {
-      setError(t('common.error'));
-    } finally {
-      setLoadingMore(false);
-    }
+  const controllerRef = useRef<BrowsePaginationController | null>(null);
+
+  useEffect(() => {
+    const controller = createBrowsePaginationController<Cursor>({
+      fetchPage: getActiveGigsPage,
+      pageSize: BROWSE_PAGE_SIZE,
+      getInitialErrorMessage: () => initialErrRef.current(),
+      getLoadMoreErrorMessage: () => loadMoreErrRef.current(),
+      onStateChange: setPageState
+    });
+    controllerRef.current = controller;
+    void controller.loadInitial();
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, []);
+
+  const retryInitial = () => {
+    void controllerRef.current?.loadInitial();
+  };
+
+  const loadMore = () => {
+    void controllerRef.current?.loadMore();
   };
 
   const resetAllFilters = () => {
@@ -78,6 +71,7 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
     setNeigh('');
   };
 
+  const { gigs, lastDoc, loading, loadingMore, initialError, loadMoreError } = pageState;
   const modeGigs = filterGigsByMode(gigs, mode);
   const filtered = filterListings(gigs, {
     mode,
@@ -226,14 +220,10 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
 
       {loading ? (
         <p className="muted center">{t('common.loading')}</p>
-      ) : error ? (
-        <div className="empty">
-          <p>{error}</p>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => setReloadTick((n) => n + 1)}
-          >
+      ) : initialError ? (
+        <div className="empty" role="alert">
+          <p>{initialError}</p>
+          <button type="button" className="btn btn-primary" onClick={retryInitial}>
             {t('common.retry')}
           </button>
         </div>
@@ -268,11 +258,30 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
         </div>
       )}
 
-      {lastDoc && !loading && (
+      {lastDoc && !loading && !initialError && (
         <div className="center load-more">
-          <button className="btn btn-ghost" onClick={loadMore} disabled={loadingMore}>
-            {loadingMore ? t('common.loading') : t('browse.loadMore')}
-          </button>
+          {loadMoreError ? (
+            <div className="load-more-error" role="alert">
+              <p className="form-error">{loadMoreError}</p>
+              <button
+                type="button"
+                className="btn btn-soft-green"
+                onClick={loadMore}
+                disabled={loadingMore}
+              >
+                {loadingMore ? t('common.loading') : t('browse.loadMoreRetry')}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={loadMore}
+              disabled={loadingMore}
+            >
+              {loadingMore ? t('common.loading') : t('browse.loadMore')}
+            </button>
+          )}
         </div>
       )}
     </div>

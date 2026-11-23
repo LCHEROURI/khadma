@@ -1483,3 +1483,14 @@ textarea {
   margin-top: var(--s-4);
   text-align: center;
 }
+
+.load-more-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+}
