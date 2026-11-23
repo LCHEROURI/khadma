@@ -4,8 +4,10 @@ import { LangProvider, useLang } from './lib/i18n';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Browse } from './pages/Browse';
+import { Home } from './pages/Home';
 
+const Browse = lazy(() => import('./pages/Browse').then((m) => ({ default: m.Browse })));
+const Employer = lazy(() => import('./pages/Employer').then((m) => ({ default: m.Employer })));
 const GigDetail = lazy(() => import('./pages/GigDetail').then((m) => ({ default: m.GigDetail })));
 const PostGig = lazy(() => import('./pages/PostGig').then((m) => ({ default: m.PostGig })));
 const Saved = lazy(() => import('./pages/Saved').then((m) => ({ default: m.Saved })));
@@ -40,9 +42,15 @@ export default function App() {
             <ErrorBoundary>
               <Suspense fallback={<RouteFallback />}>
                 <Routes>
-                  <Route path="/" element={<Browse />} />
+                  <Route path="/" element={<Home />} />
+                  <Route path="/jobs" element={<Browse mode="job" />} />
+                  <Route path="/services" element={<Browse mode="service" />} />
+                  <Route path="/listings" element={<Browse mode="all" />} />
+                  <Route path="/employer" element={<Employer />} />
+                  <Route path="/employer/post" element={<PostGig lockedType="job" />} />
+                  <Route path="/services/post" element={<PostGig lockedType="service" />} />
                   <Route path="/gig/:id" element={<GigDetail />} />
-                  <Route path="/post" element={<PostGig />} />
+                  <Route path="/post" element={<PostGig defaultType="job" />} />
                   <Route path="/saved" element={<Saved />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/admin" element={<Admin />} />

@@ -4,12 +4,13 @@ rules_version = '2';
 // Assumed Data Model (KHADMA — Oran Pilot)
 // ===============================================================
 //
-// Collection: gigs (publicly readable when status == 'active'; NO PII)
+// Collection: gigs (publicly readable when status == 'active', or by owner/admin; NO PII)
 // Document ID: auto-generated
 // Fields:
 //   - title: string (required, 3..120 chars)
 //   - description: string (required, 0..2000 chars)
 //   - category: string (required, enum of 7 categories)
+//   - listingType: string (optional, 'job' | 'service')
 //   - payMin: int (required, 0..100000000)
 //   - payMax: int (required, payMin..100000000)
 //   - neighborhood: string (required, enum of 8 Oran neighborhoods)
@@ -84,7 +85,7 @@ service cloud.firestore {
 
     function validGigFields() {
       return request.resource.data.keys().hasOnly([
-          'title', 'description', 'category', 'payMin', 'payMax',
+          'title', 'description', 'category', 'listingType', 'payMin', 'payMax',
           'neighborhood', 'posterUid', 'flags',
           'status', 'verified', 'isSample', 'createdAt'
         ])
@@ -95,6 +96,9 @@ service cloud.firestore {
         && request.resource.data.description.size() <= 2000
         && request.resource.data.category in
           ['construction', 'delivery', 'cleaning', 'tutoring', 'restaurant', 'events', 'digital']
+        && (!('listingType' in request.resource.data)
+            || (request.resource.data.listingType is string
+                && request.resource.data.listingType in ['job', 'service']))
         && request.resource.data.neighborhood in
           ['Bir El Djir', 'Es Sénia', 'Canastel', 'Maraval', 'Gambetta',
            'El Hamri', 'Ain El Turk', 'Wahran El Jadida']
@@ -126,9 +130,14 @@ service cloud.firestore {
     // ===============================================================
 
     match /gigs/{gigId} {
-      // Only active gigs are publicly browsable; hidden/removed gigs are admin-only.
+      // Only active gigs are publicly browsable; hidden/removed gigs are readable
+      // only by the phone-verified poster (owner) or admin.
       // Phone PII is NOT stored here — it lives exclusively in private /gigContacts/{gigId}.
-      allow read: if resource.data.status == 'active' || isAdmin();
+      allow read: if resource.data.status == 'active'
+        || isAdmin()
+        || (isPhoneUser()
+            && request.auth.uid != 'sample'
+            && resource.data.posterUid == request.auth.uid);
 
       // Real posts: poster must be phone-verified (SMS OTP). The 5-active-gig cap is
       // strictly enforced via a transactional +1 increment on phoneCounters/{phone},

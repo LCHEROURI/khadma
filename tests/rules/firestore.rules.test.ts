@@ -20,7 +20,7 @@ import {
   updateDoc,
   where
 } from 'firebase/firestore';
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const PROJECT_ID = 'demo-khadma';
 const PHONE = '+213555010000';
@@ -225,5 +225,119 @@ describe('KHADMA Firestore Security Rules', () => {
     await assertFails(getDoc(doc(anonDb, 'contactRateLimits', 'uid_p1')));
     await assertFails(setDoc(doc(phoneDb, 'contactRateLimits', 'uid_p1'), { gigIds: [], windowStartMs: 0 }));
     await assertFails(setDoc(doc(verifiedAdmin, 'contactRateLimits', 'uid_p1'), { gigIds: [], windowStartMs: 0 }));
+  });
+
+  it('validates optional listingType (job/service) and scopes hidden/removed reads to phone-verified owner', async () => {
+    const ownerDb = testEnv.authenticatedContext('owner-uid', { phone_number: PHONE }).firestore();
+    const otherPhoneDb = testEnv.authenticatedContext('other-uid', { phone_number: '+213555010001' }).firestore();
+
+    // Creating a job listing succeeds
+    await assertSucceeds(
+      runTransaction(ownerDb, async (tx) => {
+        const now = serverTimestamp();
+        tx.set(doc(ownerDb, 'phoneCounters', PHONE), { count: 1 });
+        tx.set(doc(ownerDb, 'gigs', 'gig_job'), { ...makeGigPayload('owner-uid'), listingType: 'job' });
+        tx.set(doc(ownerDb, 'gigContacts', 'gig_job'), {
+          posterPhone: PHONE,
+          counterId: PHONE,
+          posterUid: 'owner-uid',
+          createdAt: now
+        });
+      })
+    );
+
+    // Creating a service listing succeeds
+    await assertSucceeds(
+      runTransaction(ownerDb, async (tx) => {
+        const now = serverTimestamp();
+        tx.set(doc(ownerDb, 'phoneCounters', PHONE), { count: 2 });
+        tx.set(doc(ownerDb, 'gigs', 'gig_svc'), { ...makeGigPayload('owner-uid'), listingType: 'service' });
+        tx.set(doc(ownerDb, 'gigContacts', 'gig_svc'), {
+          posterPhone: PHONE,
+          counterId: PHONE,
+          posterUid: 'owner-uid',
+          createdAt: now
+        });
+      })
+    );
+
+    // Creating a gig with invalid listingType MUST be denied
+    await assertFails(
+      runTransaction(ownerDb, async (tx) => {
+        const now = serverTimestamp();
+        tx.set(doc(ownerDb, 'phoneCounters', PHONE), { count: 3 });
+        tx.set(doc(ownerDb, 'gigs', 'gig_bad_type'), { ...makeGigPayload('owner-uid'), listingType: 'invalid' });
+        tx.set(doc(ownerDb, 'gigContacts', 'gig_bad_type'), {
+          posterPhone: PHONE,
+          counterId: PHONE,
+          posterUid: 'owner-uid',
+          createdAt: now
+        });
+      })
+    );
+
+    // Seed a removed gig owned by owner-uid
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'gigs', 'gig_removed_own'), {
+        ...makeGigPayload('owner-uid'),
+        listingType: 'job',
+        status: 'removed'
+      });
+    });
+
+    // Owner can read own removed gig; other phone user cannot
+    await assertSucceeds(getDoc(doc(ownerDb, 'gigs', 'gig_removed_own')));
+    await assertFails(getDoc(doc(otherPhoneDb, 'gigs', 'gig_removed_own')));
+
+    // Owner cannot mutate listing ownership, status, or flags (moderation bypass blocked)
+    await assertFails(updateDoc(doc(ownerDb, 'gigs', 'gig_removed_own'), { status: 'active' }));
+    await assertFails(updateDoc(doc(ownerDb, 'gigs', 'gig_job'), { posterUid: 'other-uid' }));
+  });
+
+  it('authorizes getMyGigs() collection query only for the phone-verified owner across active/inactive/empty states', async () => {
+    const ownerDb = testEnv.authenticatedContext('owner-1', { phone_number: PHONE }).firestore();
+    const emptyOwnerDb = testEnv
+      .authenticatedContext('owner-empty', { phone_number: '+213555010002' })
+      .firestore();
+    const otherOwnerDb = testEnv
+      .authenticatedContext('owner-2', { phone_number: '+213555010003' })
+      .firestore();
+    const anonAuthDb = testEnv.authenticatedContext('anon-uid', {}).firestore();
+    const unauthDb = testEnv.unauthenticatedContext().firestore();
+
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'gigs', 'own_active'), { ...makeGigPayload('owner-1'), listingType: 'job', status: 'active' });
+      await setDoc(doc(db, 'gigs', 'own_hidden'), { ...makeGigPayload('owner-1'), listingType: 'job', status: 'hidden' });
+      await setDoc(doc(db, 'gigs', 'own_removed'), { ...makeGigPayload('owner-1'), listingType: 'service', status: 'removed' });
+      await setDoc(doc(db, 'gigs', 'other_hidden'), { ...makeGigPayload('owner-2'), listingType: 'job', status: 'hidden' });
+    });
+
+    // Exact getMyGigs() query for owner with active + hidden + removed listings -> SUCCEEDS & returns all 3
+    const ownSnap = await assertSucceeds(
+      getDocs(query(collection(ownerDb, 'gigs'), where('posterUid', '==', 'owner-1'), limit(25)))
+    );
+    expect(ownSnap.docs.map((d) => d.id).sort()).toEqual(['own_active', 'own_hidden', 'own_removed']);
+
+    // Exact getMyGigs() query for owner with zero listings -> SUCCEEDS & returns 0
+    const emptySnap = await assertSucceeds(
+      getDocs(query(collection(emptyOwnerDb, 'gigs'), where('posterUid', '==', 'owner-empty'), limit(25)))
+    );
+    expect(emptySnap.size).toBe(0);
+
+    // Different authenticated phone user querying owner-1's listings -> MUST DENY
+    await assertFails(
+      getDocs(query(collection(otherOwnerDb, 'gigs'), where('posterUid', '==', 'owner-1'), limit(25)))
+    );
+
+    // Authenticated anonymous user (no phone_number) querying owner-1's listings -> MUST DENY
+    await assertFails(
+      getDocs(query(collection(anonAuthDb, 'gigs'), where('posterUid', '==', 'owner-1'), limit(25)))
+    );
+
+    // Unauthenticated user querying owner-1's listings -> MUST DENY
+    await assertFails(
+      getDocs(query(collection(unauthDb, 'gigs'), where('posterUid', '==', 'owner-1'), limit(25)))
+    );
   });
 });

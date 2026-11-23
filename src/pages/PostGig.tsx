@@ -8,12 +8,18 @@ import { getRemainingForPhone, postGig, RateLimitError } from '../lib/db';
 import { errKey, formatNeighborhood } from '../lib/format';
 import { normalizeDzPhone } from '../lib/phone';
 import { createFirebaseSmsAdapter, type PhoneVerificationAdapter } from '../lib/phoneAuth';
-import type { Category } from '../lib/types';
+import type { Category, ListingType } from '../lib/types';
 import { Banner } from '../components/Banner';
 
 type Step = 'verify' | 'code' | 'form';
 
-export function PostGig() {
+export function PostGig({
+  defaultType = 'job',
+  lockedType
+}: {
+  defaultType?: ListingType;
+  lockedType?: ListingType;
+}) {
   const { t } = useLang();
   const navigate = useNavigate();
   const { phoneNumber: authPhone, loading: authLoading } = useAuth();
@@ -28,6 +34,8 @@ export function PostGig() {
   const [err, setErr] = useState('');
 
   // Form state
+  const [selectedType, setSelectedType] = useState<ListingType>(lockedType ?? defaultType);
+  const listingType: ListingType = lockedType ?? selectedType;
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<Category>('construction');
   const [description, setDescription] = useState('');
@@ -43,6 +51,10 @@ export function PostGig() {
       verifierRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    setSelectedType(lockedType ?? defaultType);
+  }, [defaultType, lockedType]);
 
   useEffect(() => {
     if (authPhone) {
@@ -125,6 +137,7 @@ export function PostGig() {
         title: cleanTitle,
         description: cleanDesc,
         category,
+        listingType,
         payMin: min,
         payMax: max,
         neighborhood
@@ -147,10 +160,37 @@ export function PostGig() {
     setStep('verify');
   };
 
+  const heading =
+    listingType === 'service' ? t('post.serviceTitle') : t('post.employerTitle');
+
   return (
     <div className="page">
       <Banner />
-      <h1 className="page-title">{t('post.title')}</h1>
+      <h1 className="page-title">{heading}</h1>
+      {lockedType ? (
+        <div className="locked-type-row">
+          <span className={`chip chip-type-${lockedType}`}>{t(`listingType.${lockedType}`)}</span>
+        </div>
+      ) : (
+        <div className="type-switcher" role="group" aria-label={t('listingType.label')}>
+          <button
+            type="button"
+            className={`type-pill${listingType === 'job' ? ' active' : ''}`}
+            aria-pressed={listingType === 'job'}
+            onClick={() => setSelectedType('job')}
+          >
+            {t('listingType.job')}
+          </button>
+          <button
+            type="button"
+            className={`type-pill${listingType === 'service' ? ' active' : ''}`}
+            aria-pressed={listingType === 'service'}
+            onClick={() => setSelectedType('service')}
+          >
+            {t('listingType.service')}
+          </button>
+        </div>
+      )}
       <div ref={recapRef} className="recap" />
 
       {authLoading ? (

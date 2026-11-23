@@ -73,6 +73,9 @@ export function GigDetail() {
 
       <div className="detail-card">
         <div className="card-chips">
+          <span className={`chip chip-type-${gig.listingType ?? 'legacy'}`}>
+            {t(`listingType.${gig.listingType ?? 'legacy'}`)}
+          </span>
           <span className="chip">{t(`categories.${gig.category}`)}</span>
           <span className="chip chip-neigh">{formatNeighborhood(gig.neighborhood, t)}</span>
           {gig.isSample && <span className="chip chip-sample">{t('gig.sampleBadge')}</span>}

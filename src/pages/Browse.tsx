@@ -5,11 +5,13 @@ import { useLang } from '../lib/i18n';
 import { BROWSE_PAGE_SIZE, CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
 import { getActiveGigsPage } from '../lib/db';
 import { formatNeighborhood } from '../lib/format';
+import { filterGigsByMode, type BrowseMode } from '../lib/listingType';
 import type { Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
 import { GigCard } from '../components/GigCard';
+import { Icon } from '../components/Icon';
 
-export function Browse() {
+export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
   const { t } = useLang();
   const [gigs, setGigs] = useState<Gig[]>([]);
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
@@ -66,14 +68,39 @@ export function Browse() {
     }
   };
 
-  const filtered = gigs.filter(
+  const modeGigs = filterGigsByMode(gigs, mode);
+  const filtered = modeGigs.filter(
     (g) => (!cat || g.category === cat) && (!neigh || g.neighborhood === neigh)
   );
+
+  const pageTitle =
+    mode === 'job'
+      ? t('browse.jobsTitle')
+      : mode === 'service'
+        ? t('browse.servicesTitle')
+        : t('browse.allTitle');
+  const pageSubtitle =
+    mode === 'job'
+      ? t('browse.jobsSubtitle')
+      : mode === 'service'
+        ? t('browse.servicesSubtitle')
+        : t('browse.allSubtitle');
+  const emptyText =
+    modeGigs.length === 0
+      ? mode === 'job'
+        ? t('browse.jobsEmpty')
+        : mode === 'service'
+          ? t('browse.servicesEmpty')
+          : t('browse.emptyNoGigs')
+      : t('browse.empty');
+  const postPath = mode === 'service' ? '/services/post' : '/employer/post';
+  const postCtaLabel = mode === 'service' ? t('home.servicesPost') : t('home.employerCta');
 
   return (
     <div className="page">
       <Banner />
-      <h1 className="page-title">{t('browse.title')}</h1>
+      <h1 className="page-title">{pageTitle}</h1>
+      <p className="page-subtitle">{pageSubtitle}</p>
       <div className="filters">
         <label className="filter">
           <span>{t('browse.filters.categoryLabel')}</span>
@@ -118,11 +145,19 @@ export function Browse() {
         <p className="muted center">{error}</p>
       ) : filtered.length === 0 ? (
         <div className="empty">
-          <p>{gigs.length === 0 ? t('browse.emptyNoGigs') : t('browse.empty')}</p>
-          {gigs.length === 0 && (
-            <Link to="/post" className="btn btn-primary">
-              {t('nav.post')}
-            </Link>
+          <Icon name="algeriaEmblem" size={34} />
+          <p>{emptyText}</p>
+          {modeGigs.length === 0 && (
+            <div className="empty-actions">
+              <Link to={postPath} className="btn btn-primary">
+                {postCtaLabel}
+              </Link>
+              {mode !== 'all' && (
+                <Link to="/listings" className="btn btn-soft-green">
+                  {t('browse.viewAllLink')}
+                </Link>
+              )}
+            </div>
           )}
         </div>
       ) : (

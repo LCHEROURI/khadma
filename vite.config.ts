@@ -13,8 +13,8 @@ export default defineConfig({
         short_name: 'KHADMA',
         description: 'Emplois et services à Oran, 100% gratuit.',
         lang: 'fr',
-        theme_color: '#0b6e69',
-        background_color: '#f6f7f9',
+        theme_color: '#087B52',
+        background_color: '#F5F8F5',
         display: 'standalone',
         start_url: '/',
         icons: [

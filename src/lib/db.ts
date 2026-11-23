@@ -17,7 +17,7 @@ import {
 import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../firebase';
-import type { Gig, GigStatus, ReportReason } from './types';
+import type { Gig, GigStatus, ListingType, ReportReason } from './types';
 import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
 import { SAMPLE_GIGS } from './samples';
 import { readStringList, writeStringList } from './storage';
@@ -83,6 +83,7 @@ export interface PostGigInput {
   title: string;
   description: string;
   category: Gig['category'];
+  listingType: ListingType;
   payMin: number;
   payMax: number;
   neighborhood: string;
@@ -107,6 +108,7 @@ export async function postGig(input: PostGigInput): Promise<string> {
       title: input.title.trim(),
       description: input.description.trim(),
       category: input.category,
+      listingType: input.listingType,
       payMin: Math.round(input.payMin),
       payMax: Math.round(input.payMax),
       neighborhood: input.neighborhood,
@@ -125,6 +127,13 @@ export async function postGig(input: PostGigInput): Promise<string> {
     });
   });
   return gigRef.id;
+}
+
+export async function getMyGigs(uid: string): Promise<Gig[]> {
+  const q = query(collection(db, 'gigs'), where('posterUid', '==', uid), limit(25));
+  const snap = await getDocs(q);
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+  return items.sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
 }
 
 export async function getRemainingForPhone(phone: string): Promise<number> {

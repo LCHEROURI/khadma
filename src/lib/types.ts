@@ -1,5 +1,7 @@
 export type GigStatus = 'active' | 'hidden' | 'removed';
 
+export type ListingType = 'job' | 'service';
+
 export type Category =
   | 'construction'
   | 'delivery'
@@ -16,6 +18,7 @@ export interface Gig {
   title: string;
   description: string;
   category: Category;
+  listingType?: ListingType; // Explicit discriminator ('job' | 'service'); undefined on legacy listings
   payMin: number;
   payMax: number;
   neighborhood: string;

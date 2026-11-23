@@ -13,6 +13,29 @@ const STROKE = {
 };
 
 export function Icon({ name, size = 20, className }: IconProps) {
+  if (name === 'algeriaEmblem') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 36 36" fill="none" className={className} aria-hidden="true">
+        <path
+          d="M21.5 7.2A11 11 0 1 0 21.5 28.8A8.6 8.6 0 1 1 21.5 7.2Z"
+          fill="#D32235"
+        />
+        <polygon
+          points="24.2,12.2 25.5,16.1 29.6,16.1 26.3,18.5 27.6,22.4 24.2,20 20.8,22.4 22.1,18.5 18.8,16.1 22.9,16.1"
+          fill="#D32235"
+        />
+      </svg>
+    );
+  }
+
+  if (name === 'redStar') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="#D32235" className={className} aria-hidden="true">
+        <polygon points="12,2.5 14.9,8.7 21.7,9.5 16.6,14.1 18,20.8 12,17.4 6,20.8 7.4,14.1 2.3,9.5 9.1,8.7" />
+      </svg>
+    );
+  }
+
   if (name === 'whatsapp') {
     return (
       <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
@@ -96,6 +119,27 @@ export function Icon({ name, size = 20, className }: IconProps) {
           <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
           <line x1="12" y1="9" x2="12" y2="13" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
+        </>
+      )}
+      {name === 'briefcase' && (
+        <>
+          <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+          <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+        </>
+      )}
+      {name === 'search' && (
+        <>
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </>
+      )}
+      {name === 'wrench' && (
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+      )}
+      {name === 'user' && (
+        <>
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
         </>
       )}
     </svg>

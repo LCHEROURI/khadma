@@ -9,6 +9,9 @@ export function GigCard({ gig }: { gig: Gig }) {
   return (
     <Link to={`/gig/${gig.id}`} className="card">
       <div className="card-chips">
+        <span className={`chip chip-type-${gig.listingType ?? 'legacy'}`}>
+          {t(`listingType.${gig.listingType ?? 'legacy'}`)}
+        </span>
         <span className="chip">{t(`categories.${gig.category}`)}</span>
         <span className="chip chip-neigh">{formatNeighborhood(gig.neighborhood, t)}</span>
       </div>

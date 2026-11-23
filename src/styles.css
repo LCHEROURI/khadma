@@ -2,23 +2,28 @@
    KHADMA design tokens & styles
    ============================================================ */
 :root {
-  /* palette */
-  --bg: #f5f6f8;
+  /* Algerian Flag inspired palette */
+  --bg: #f5f8f5;
   --surface: #ffffff;
-  --ink: #101828;
-  --ink-2: #5b6675;
-  --ink-3: #8a94a3;
-  --brand: #0b6e69;
-  --brand-dark: #08534f;
-  --brand-soft: #e4f1ef;
-  --accent: #f59e0b;
+  --ink: #0f2419;
+  --ink-2: #44584d;
+  --ink-3: #63786d;
+  --brand: #087b52;
+  --brand-dark: #075b40;
+  --brand-soft: #e7f3eb;
+  --brand-border: #c5e2cf;
+  --red: #d32235;
+  --red-dark: #b0192a;
+  --red-soft: #fdecef;
+  --red-border: #f5c2ca;
+  --accent: #d32235;
   --banner-bg: #fdf0d3;
   --banner-ink: #7c4a03;
-  --danger: #b3261e;
-  --danger-soft: #fbe9e7;
-  --wa: #128c7e;
-  --wa-dark: #0d6f64;
-  --border: #e4e7ec;
+  --danger: #d32235;
+  --danger-soft: #fdecef;
+  --wa: #087b52;
+  --wa-dark: #075b40;
+  --border: #dce7e0;
 
   /* radius */
   --r-lg: 14px;
@@ -192,7 +197,7 @@ textarea {
   user-select: none;
 }
 
-/* ---------- bottom nav ---------- */
+/* ---------- bottom nav (all colored pills) ---------- */
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -200,27 +205,56 @@ textarea {
   right: 0;
   z-index: 40;
   background: var(--surface);
-  border-top: 1px solid var(--border);
-  display: flex;
-  justify-content: space-around;
+  border-top: 1px solid var(--brand-border);
+  box-shadow: 0 -2px 12px rgba(7, 91, 64, 0.08);
   padding: var(--s-2) var(--s-2) calc(var(--s-2) + env(safe-area-inset-bottom));
+}
+
+.bottom-nav-inner {
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
 }
 
 .nav-item {
   flex: 1;
+  min-width: 0;
+  min-height: 48px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: var(--s-1) 0;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--ink-3);
-  border-radius: var(--r-md);
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  border: 1px solid var(--brand-border);
+  border-radius: 14px;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.nav-item .nav-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item.active {
-  color: var(--brand);
+  background: var(--brand);
+  color: #ffffff;
+  border-color: var(--brand-dark);
+  box-shadow: 0 2px 8px rgba(8, 123, 82, 0.25);
+}
+
+.nav-item:focus-visible {
+  outline: 2px solid var(--brand-dark);
+  outline-offset: 2px;
 }
 
 /* ---------- typography ---------- */
@@ -1013,5 +1047,283 @@ textarea {
 @media (max-width: 380px) {
   .filters {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   KHADMA V1.2: Algerian Flag Identity, Home Journeys & Type Pills
+   ============================================================ */
+.page-subtitle {
+  margin: calc(-1 * var(--s-2)) 0 var(--s-4);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+
+.section-heading {
+  font-size: var(--fs-md);
+  font-weight: 800;
+  margin: var(--s-5) 0 var(--s-3);
+  color: var(--ink);
+}
+
+.hero-card {
+  background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
+  color: #ffffff;
+  border-radius: var(--r-lg);
+  padding: var(--s-5);
+  margin-bottom: var(--s-4);
+  box-shadow: var(--shadow-md);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.hero-emblem {
+  flex: none;
+  background: #ffffff;
+  border-radius: 50%;
+  padding: 3px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+}
+
+.hero-title {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  line-height: 1.25;
+  color: #ffffff;
+}
+
+.hero-subtitle {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: rgba(255, 255, 255, 0.92);
+  line-height: 1.45;
+}
+
+.journey-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--s-4);
+  margin-bottom: var(--s-4);
+}
+
+@media (min-width: 560px) {
+  .journey-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.journey-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--s-4);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.journey-employer {
+  border-top: 4px solid var(--brand);
+}
+
+.journey-seeker {
+  border-top: 4px solid var(--red);
+}
+
+.journey-services {
+  border-top: 3px solid var(--brand-dark);
+  background: #ffffff;
+  margin-bottom: var(--s-4);
+}
+
+.journey-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.journey-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.journey-icon-green {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.journey-icon-red {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.journey-icon-neutral {
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+}
+
+.journey-title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.journey-desc {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  flex: 1;
+}
+
+.journey-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.journey-actions-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.journey-actions-row .btn {
+  flex: 1;
+  min-width: 140px;
+}
+
+.btn-accent-red {
+  background: var(--red);
+  color: #ffffff;
+  border: 1px solid var(--red-dark);
+}
+
+.btn-accent-red:hover {
+  background: var(--red-dark);
+}
+
+.btn-soft-green {
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  border: 1px solid var(--brand-border);
+}
+
+.btn-soft-red {
+  background: var(--red-soft);
+  color: var(--red-dark);
+  border: 1px solid var(--red-border);
+}
+
+.home-legacy-wrap {
+  text-align: center;
+  margin-top: var(--s-2);
+}
+
+.home-legacy-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--brand-dark);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.locked-type-row {
+  margin: calc(-1 * var(--s-2)) 0 var(--s-4);
+}
+
+.type-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+}
+
+.type-pill {
+  min-height: 44px;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  border: 1px solid var(--brand-border);
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+}
+
+.type-pill.active {
+  background: var(--brand);
+  color: #ffffff;
+  border-color: var(--brand-dark);
+}
+
+.chip-type-job {
+  background: var(--brand-soft);
+  color: var(--brand-dark);
+  border: 1px solid var(--brand-border);
+}
+
+.chip-type-service {
+  background: var(--red-soft);
+  color: var(--red-dark);
+  border: 1px solid var(--red-border);
+}
+
+.chip-type-legacy {
+  background: #edf2ee;
+  color: var(--ink-2);
+}
+
+.employer-cta-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

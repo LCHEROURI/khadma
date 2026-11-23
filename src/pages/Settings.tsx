@@ -80,6 +80,13 @@ export function Settings() {
       )}
 
       <section className="settings-section">
+        <Link to="/saved" className="btn btn-soft-green wide">
+          <Icon name="bookmark" size={18} />
+          {t('nav.saved')}
+        </Link>
+      </section>
+
+      <section className="settings-section">
         <Link to="/admin" className="btn btn-ghost wide">
           {t('settings.admin')}
         </Link>

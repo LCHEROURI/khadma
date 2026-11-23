@@ -1,24 +1,33 @@
 import { expect, test } from '@playwright/test';
 
-test.describe('KHADMA critical mobile user journeys', () => {
-  test('renders browse screen with safety banner, Oran-only neighborhoods, and bottom nav', async ({ page }) => {
+test.describe('KHADMA V1.2 critical mobile user journeys', () => {
+  test('renders Home with Employer, Job Seeker, Services cards and all-pill bottom nav', async ({ page }) => {
     await page.goto('/');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
     await expect(page.locator('.banner')).toBeVisible();
-    await expect(page.locator('h1.page-title')).toBeVisible();
 
-    const neighborhoodOptions = await page.locator('select').nth(1).locator('option').allTextContents();
+    await expect(page.getByRole('heading', { name: 'Je suis employeur' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Je cherche un emploi' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Services et prestataires' })).toBeVisible();
+
+    const pills = page.locator('.bottom-nav .nav-item');
+    await expect(pills).toHaveCount(5);
+    await expect(page.locator('.bottom-nav .nav-item.active')).toHaveCount(1);
+    await expect(page.locator('.bottom-nav .nav-item[aria-current="page"]')).toHaveCount(1);
+  });
+
+  test('navigates Job Seeker flow to /jobs with Oran-only neighborhoods and preserves category across FR/AR toggle', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('link', { name: 'Voir les offres d’emploi' }).click();
+    await expect(page).toHaveURL(/\/jobs$/);
+
+    const neighborhoodOptions = await page.locator('.filters select').nth(1).locator('option').allTextContents();
     expect(neighborhoodOptions).toContain('Bir El Djir');
     expect(neighborhoodOptions).toContain('Es Sénia');
     expect(neighborhoodOptions.join(' ')).not.toContain('Algiers');
     expect(neighborhoodOptions.join(' ')).not.toContain('Alger');
-  });
 
-  test('defaults to French LTR, switches to Arabic RTL via header toggle, persists, and migrates legacy dar', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
-    await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
-
-    // Select a category in French and verify switching to Arabic RTL updates label without changing value.
     const catSelect = page.locator('.filters select').first();
     await catSelect.selectOption('delivery');
     await expect(catSelect).toHaveValue('delivery');
@@ -43,25 +52,45 @@ test.describe('KHADMA critical mobile user journeys', () => {
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
     await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
-    const migrated = await page.evaluate(() => localStorage.getItem('khadma-lang'));
-    expect(migrated).toBe('fr');
+    expect(await page.evaluate(() => localStorage.getItem('khadma-lang'))).toBe('fr');
   });
 
-  test('shows safety banner and validates Algerian phone input on /post via Enter key', async ({ page }) => {
+  test('navigates Employer and Services entry points with locked listing types and keeps switcher on /post', async ({ page }) => {
+    await page.goto('/employer');
+    await expect(page.getByRole('heading', { name: 'Espace employeur' })).toBeVisible();
+    await page.getByRole('link', { name: 'Publier une offre d’emploi' }).click();
+    await expect(page).toHaveURL(/\/employer\/post$/);
+    await expect(page.locator('.locked-type-row')).toHaveText('Offre d’emploi');
+    await expect(page.locator('.type-switcher')).toHaveCount(0);
+
+    await page.goto('/services');
+    await expect(page.getByRole('heading', { name: 'Services et prestataires' })).toBeVisible();
+    await page.goto('/services/post');
+    await expect(page.locator('.locked-type-row')).toHaveText('Service');
+    await expect(page.locator('.type-switcher')).toHaveCount(0);
+
     await page.goto('/post');
+    await expect(page.locator('.type-switcher')).toBeVisible();
+    await expect(page.locator('.type-pill.active')).toHaveText('Offre d’emploi');
+
+    await page.goto('/listings');
+    await expect(page.getByRole('heading', { name: 'Toutes les annonces' })).toBeVisible();
+  });
+
+  test('shows safety banner and validates Algerian phone input on /employer/post via Enter key', async ({ page }) => {
+    await page.goto('/employer/post');
     await expect(page.locator('.banner')).toBeVisible();
     const phoneInput = page.locator('input[type="tel"]');
+    await expect(phoneInput).toHaveAttribute('dir', 'ltr');
     await phoneInput.fill('041123456'); // invalid landline
     await phoneInput.press('Enter');
     await expect(page.locator('.form-error')).toBeVisible();
   });
 
-  test('renders saved empty state offline-first without login', async ({ page }) => {
+  test('renders saved empty state offline-first and admin login gate when unauthenticated', async ({ page }) => {
     await page.goto('/saved');
     await expect(page.locator('.empty')).toBeVisible();
-  });
 
-  test('renders admin login gate on /admin when unauthenticated', async ({ page }) => {
     await page.goto('/admin');
     await expect(page.locator('input[type="email"]')).toBeVisible();
     await expect(page.locator('input[type="password"]')).toBeVisible();
