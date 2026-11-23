@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { migrateLegacyGigContacts } from '../../scripts/migrate-gig-contacts.mjs';
+import {
+  loadFirebaseAdmin,
+  migrateLegacyGigContacts
+} from '../../scripts/migrate-gig-contacts.mjs';
 
 interface GigDoc {
   status?: string;
@@ -165,5 +168,13 @@ describe('SEC-001 migrateLegacyGigContacts safety invariants', () => {
     // Healthy doc migrated cleanly
     expect(contacts.get('g_ok')?.posterPhone).toBe('+213555010012');
     expect(gigs.get('g_ok')?.posterPhone).toBeUndefined();
+  });
+
+  it('resolves firebase-admin dependencies from functions/package.json fallback', async () => {
+    const { app, firestore } = await loadFirebaseAdmin();
+    expect(typeof app.initializeApp).toBe('function');
+    expect(typeof app.applicationDefault).toBe('function');
+    expect(typeof firestore.getFirestore).toBe('function');
+    expect(typeof firestore.FieldValue?.delete).toBe('function');
   });
 });

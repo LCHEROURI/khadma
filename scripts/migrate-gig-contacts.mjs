@@ -17,6 +17,7 @@
  *   node scripts/migrate-gig-contacts.mjs --project khadma-oran --apply  # live write
  */
 
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 const E164_DZ_RE = /^\+213[567]\d{8}$/;
@@ -109,9 +110,34 @@ export async function migrateLegacyGigContacts(store, options = {}) {
   return stats;
 }
 
+export async function loadFirebaseAdmin() {
+  try {
+    const [app, firestore] = await Promise.all([
+      import('firebase-admin/app'),
+      import('firebase-admin/firestore')
+    ]);
+    return { app, firestore };
+  } catch (err) {
+    const isNotFound =
+      err?.code === 'ERR_MODULE_NOT_FOUND' ||
+      err?.code === 'MODULE_NOT_FOUND' ||
+      (err instanceof Error && err.message.includes('firebase-admin'));
+    if (!isNotFound) throw err;
+    const functionsRequire = createRequire(new URL('../functions/package.json', import.meta.url));
+    const appPath = functionsRequire.resolve('firebase-admin/app');
+    const firestorePath = functionsRequire.resolve('firebase-admin/firestore');
+    const [app, firestore] = await Promise.all([
+      import(pathToFileURL(appPath).href),
+      import(pathToFileURL(firestorePath).href)
+    ]);
+    return { app, firestore };
+  }
+}
+
 async function runCli() {
-  const { initializeApp, applicationDefault } = await import('firebase-admin/app');
-  const { FieldValue, getFirestore } = await import('firebase-admin/firestore');
+  const { app, firestore } = await loadFirebaseAdmin();
+  const { initializeApp, applicationDefault } = app;
+  const { FieldValue, getFirestore } = firestore;
 
   const args = process.argv.slice(2);
   const apply = args.includes('--apply');
