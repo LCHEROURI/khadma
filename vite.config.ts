@@ -9,10 +9,10 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: 'KHADMA — Khdma f Oran',
+        name: 'KHADMA — Oran',
         short_name: 'KHADMA',
-        description: 'Petits boulots à Oran, 100% gratuit.',
-        lang: 'ar-DZ',
+        description: 'Emplois et services à Oran, 100% gratuit.',
+        lang: 'fr',
         theme_color: '#0b6e69',
         background_color: '#f6f7f9',
         display: 'standalone',

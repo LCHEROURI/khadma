@@ -13,14 +13,38 @@ test.describe('KHADMA critical mobile user journeys', () => {
     expect(neighborhoodOptions.join(' ')).not.toContain('Alger');
   });
 
-  test('switches language to Arabic RTL and persists in localStorage', async ({ page }) => {
-    await page.goto('/settings');
-    await page.getByRole('button', { name: 'العربية' }).click();
+  test('defaults to French LTR, switches to Arabic RTL via header toggle, persists, and migrates legacy dar', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
+
+    // Select a category in French and verify switching to Arabic RTL updates label without changing value.
+    const catSelect = page.locator('.filters select').first();
+    await catSelect.selectOption('delivery');
+    await expect(catSelect).toHaveValue('delivery');
+    await expect(catSelect.locator('option[value="delivery"]')).toHaveText('Livraison');
+
+    const toggle = page.locator('.lang-toggle');
+    await toggle.getByRole('button', { name: 'العربية' }).click();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await expect(page.locator('.header-name')).toHaveText('خدامة');
+    await expect(catSelect).toHaveValue('delivery');
+    await expect(catSelect.locator('option[value="delivery"]')).toHaveText('توصيل');
 
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+
+    await toggle.getByRole('button', { name: 'FR' }).click();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
+
+    await page.evaluate(() => localStorage.setItem('khadma-lang', 'dar'));
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'fr');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
+    const migrated = await page.evaluate(() => localStorage.getItem('khadma-lang'));
+    expect(migrated).toBe('fr');
   });
 
   test('shows safety banner and validates Algerian phone input on /post via Enter key', async ({ page }) => {

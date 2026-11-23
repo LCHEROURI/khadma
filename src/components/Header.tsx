@@ -13,14 +13,37 @@ export function Logo({ size = 30 }: { size?: number }) {
 }
 
 export function Header() {
-  const { t } = useLang();
+  const { t, lang, setLang } = useLang();
   return (
     <header className="header">
       <div className="header-inner">
-        <Logo size={32} />
-        <div className="header-text">
-          <div className="header-name">{t('appName')}</div>
-          <div className="header-tag">{t('tagline')}</div>
+        <div className="header-brand">
+          <Logo size={32} />
+          <div className="header-text">
+            <div className="header-name">{t('appName')}</div>
+            <div className="header-tag">{t('tagline')}</div>
+          </div>
+        </div>
+        <div className="lang-toggle" role="group" aria-label={t('lang.switchLabel')}>
+          <button
+            type="button"
+            className={`lang-toggle-btn${lang === 'fr' ? ' active' : ''}`}
+            aria-pressed={lang === 'fr'}
+            lang="fr"
+            onClick={() => setLang('fr')}
+          >
+            FR
+          </button>
+          <span className="lang-toggle-sep" aria-hidden="true">|</span>
+          <button
+            type="button"
+            className={`lang-toggle-btn${lang === 'ar' ? ' active' : ''}`}
+            aria-pressed={lang === 'ar'}
+            lang="ar"
+            onClick={() => setLang('ar')}
+          >
+            العربية
+          </button>
         </div>
       </div>
     </header>

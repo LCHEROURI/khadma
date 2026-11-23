@@ -173,6 +173,7 @@ export function PostGig() {
               type="tel"
               inputMode="tel"
               autoComplete="tel"
+              dir="ltr"
               placeholder={t('post.phonePlaceholder')}
               value={phoneInput}
               onChange={(e) => setPhoneInput(e.target.value)}
@@ -200,6 +201,7 @@ export function PostGig() {
             <input
               type="tel"
               inputMode="numeric"
+              dir="ltr"
               maxLength={6}
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
@@ -282,7 +284,7 @@ export function PostGig() {
           </label>
           <label className="field">
             <span>{t('post.whatsappLabel')}</span>
-            <input value={phone} disabled />
+            <input value={phone} disabled dir="ltr" />
             <p className="field-hint">{t('post.whatsappNote')}</p>
           </label>
           {err && <p className="form-error">{err}</p>}

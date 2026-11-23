@@ -1,4 +1,4 @@
-export type Lang = 'dar' | 'fr' | 'ar';
+export type Lang = 'fr' | 'ar';
 
 export interface LangMeta {
   id: Lang;
@@ -7,15 +7,22 @@ export interface LangMeta {
   htmlLang: string;
 }
 
+export const DEFAULT_LANG: Lang = 'fr';
+
 export const LANGS: LangMeta[] = [
-  { id: 'dar', label: 'Darija', dir: 'ltr', htmlLang: 'ar-DZ' },
   { id: 'fr', label: 'Français', dir: 'ltr', htmlLang: 'fr' },
   { id: 'ar', label: 'العربية', dir: 'rtl', htmlLang: 'ar' }
 ];
 
+export function resolveSavedLang(saved: string | null | undefined): Lang {
+  return saved === 'ar' ? 'ar' : DEFAULT_LANG;
+}
+
 type Dict = Record<string, string>;
 
-const dar: Dict = {
+// Legacy Darija strings preserved temporarily in source control for rollback only.
+// Inaccessible through the UI and never used as a runtime fallback.
+export const LEGACY_DARIA_STRINGS: Dict = {
   appName: 'KHADMA',
   tagline: 'El khdma li tne3em 3lik — f Oran, bla ma tkhalles walou.',
   'nav.label': 'Navigation principale',
@@ -170,7 +177,8 @@ const dar: Dict = {
 
 const fr: Dict = {
   appName: 'KHADMA',
-  tagline: 'Des petits boulots à Oran — 100% gratuit.',
+  tagline: 'Emplois et services à Oran — 100% gratuit.',
+  'lang.switchLabel': 'Choisir la langue',
   'nav.label': 'Navigation principale',
   'nav.browse': 'Annonces',
   'nav.post': 'Publier',
@@ -240,7 +248,7 @@ const fr: Dict = {
   'post.title': 'Publier une annonce',
   'post.verifyTitle': 'Vérifiez votre numéro',
   'post.verifyText':
-    'On vous envoie un code par SMS pour confirmer que votre numéro est réel.',
+    'Nous vous envoyons un code par SMS pour confirmer que votre numéro est réel.',
   'post.phoneLabel': 'Numéro de téléphone (WhatsApp)',
   'post.phonePlaceholder': '0550 12 34 56',
   'post.sendCode': 'Envoyer le code',
@@ -262,7 +270,7 @@ const fr: Dict = {
   'post.payMax': 'Max',
   'post.neighborhoodLabel': 'Quartier',
   'post.whatsappLabel': 'Numéro WhatsApp',
-  'post.whatsappNote': 'Votre numéro vérifié — c’est par là qu’on vous contacte.',
+  'post.whatsappNote': 'Votre numéro vérifié — utilisé uniquement pour recevoir les contacts WhatsApp.',
   'post.submit': 'Publier l’annonce',
   'post.required': 'Remplissez les champs obligatoires.',
   'post.success': 'Publiée ! Votre annonce est en ligne.',
@@ -284,7 +292,7 @@ const fr: Dict = {
   'settings.admin': 'Admin',
   'settings.about': 'À propos de KHADMA',
   'settings.aboutText':
-    'KHADMA — plateforme gratuite de petits boulots pour les jeunes d’Oran. On ne collecte que le minimum : numéro, annonces, signalements.',
+    'KHADMA — plateforme gratuite d’emplois et de services à Oran. Nous collectons uniquement le minimum : numéro, annonces et signalements.',
   'settings.signout': 'Se déconnecter',
   'admin.title': 'Admin — File de modération',
   'admin.notAdmin': 'Réservé à l’administrateur.',
@@ -323,7 +331,8 @@ const fr: Dict = {
 
 const ar: Dict = {
   appName: 'خدامة',
-  tagline: 'أعمال صغيرة في وهران — مجاناً بالكامل.',
+  tagline: 'فرص عمل وخدمات في وهران — مجاناً بالكامل.',
+  'lang.switchLabel': 'تغيير اللغة',
   'nav.label': 'التنقل الرئيسي',
   'nav.browse': 'الإعلانات',
   'nav.post': 'انشر إعلاناً',
@@ -394,7 +403,7 @@ const ar: Dict = {
   'post.phonePlaceholder': '0550 12 34 56',
   'post.sendCode': 'إرسال الرمز',
   'post.codeTitle': 'أدخل الرمز',
-  'post.codeText': 'أُرسل رمز من 6 أرقام عبر SMS إلى: {phone}',
+  'post.codeText': 'أُرسل رمز مكوّن من 6 أرقام عبر رسالة نصية إلى: {phone}',
   'post.codeLabel': 'الرمز (6 أرقام)',
   'post.confirm': 'تأكيد',
   'post.resend': 'إعادة الإرسال',
@@ -411,7 +420,7 @@ const ar: Dict = {
   'post.payMax': 'الحد الأقصى',
   'post.neighborhoodLabel': 'الحي',
   'post.whatsappLabel': 'رقم واتساب',
-  'post.whatsappNote': 'رقمك الموثّق — به يتواصلون معك.',
+  'post.whatsappNote': 'رقمك الموثّق — يُستخدم فقط للتواصل معك عبر واتساب.',
   'post.submit': 'نشر الإعلان',
   'post.required': 'املأ الحقول المطلوبة.',
   'post.success': 'نُشر! إعلانك متاح الآن.',
@@ -432,7 +441,7 @@ const ar: Dict = {
   'settings.admin': 'الإدارة',
   'settings.about': 'عن خدامة',
   'settings.aboutText':
-    'خدامة — منصة مجانية للأعمال الصغيرة لشباب وهران. نجمع الحد الأدنى فقط: رقمك، إعلاناتك، والبلاغات.',
+    'خدامة — منصة مجانية لفرص العمل والخدمات في وهران. نجمع الحد الأدنى فقط من البيانات: رقم الهاتف، الإعلانات، والبلاغات.',
   'settings.signout': 'تسجيل الخروج',
   'admin.title': 'الإدارة — قائمة المراجعة',
   'admin.notAdmin': 'هذه الصفحة للمسؤول فقط.',
@@ -466,10 +475,10 @@ const ar: Dict = {
   'common.error': 'حدث خطأ. حاول مجدداً.',
   'common.retry': 'إعادة المحاولة',
   'common.loadError': 'تعذر تحميل البيانات. تحقق من الاتصال.',
-  'wa.message': 'سلام 👋 تواصلت معك عبر خدامة بخصوص إعلانك.'
+  'wa.message': 'السلام عليكم 👋 أتواصل معك عبر خدامة بخصوص إعلانك.'
 };
 
-export const STRINGS: Record<Lang, Dict> = { dar, fr, ar };
+export const STRINGS: Record<Lang, Dict> = { fr, ar };
 
 export function tpl(s: string, vars: Record<string, string | number>): string {
   return s.replace(/\{(\w+)\}/g, (_, k: string) =>
