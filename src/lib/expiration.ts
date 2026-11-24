@@ -5,17 +5,38 @@ export type ExpirationClassification =
   | { kind: 'valid'; expiresAtMs: number }
   | { kind: 'malformed' };
 
+export type GigExpirationInput = Pick<Gig, 'expiresAt'> & {
+  city?: unknown;
+  wilayaCode?: unknown;
+  contactMethods?: unknown;
+  isSample?: unknown;
+};
+
+/**
+ * Returns true if the document carries V1.4 schema markers (`city`, `wilayaCode`, or `contactMethods`).
+ * New V1.4 active advertisements MUST have a valid `expiresAt` timestamp; missing/null `expiresAt`
+ * on a V1.4 document fails closed rather than receiving the pre-V1.4 legacy exemption.
+ */
+export function isV14ListingRecord(gig: GigExpirationInput): boolean {
+  return (
+    gig.city !== undefined ||
+    gig.wilayaCode !== undefined ||
+    gig.contactMethods !== undefined
+  );
+}
+
 /**
  * Classifies a listing's `expiresAt` field into three distinct states:
- * - `legacy_missing`: `null` or `undefined` (legitimate pre-V1.4 legacy listing).
+ * - `legacy_missing`: `null` or `undefined` on a genuine pre-V1.4 legacy listing (no V1.4 markers).
  * - `valid`: valid positive finite epoch timestamp.
- * - `malformed`: present but corrupted/unparseable value — MUST fail closed (treated as expired),
- *   never treated as a non-expiring legacy advertisement.
+ * - `malformed`: present but corrupted/unparseable value, OR missing/null on a V1.4 listing —
+ *   MUST fail closed (treated as expired), never treated as a non-expiring legacy advertisement.
  */
-export function classifyGigExpiration(gig: Pick<Gig, 'expiresAt'>): ExpirationClassification {
+export function classifyGigExpiration(gig: GigExpirationInput): ExpirationClassification {
   const value = gig.expiresAt as unknown;
   if (value === null || value === undefined) {
-    return { kind: 'legacy_missing' };
+    if (gig.isSample === true) return { kind: 'legacy_missing' };
+    return isV14ListingRecord(gig) ? { kind: 'malformed' } : { kind: 'legacy_missing' };
   }
   if (typeof value === 'number') {
     return Number.isFinite(value) && value > 0
@@ -51,7 +72,7 @@ export function classifyGigExpiration(gig: Pick<Gig, 'expiresAt'>): ExpirationCl
  * missing or malformed. Use `classifyGigExpiration` when distinguishing legacy missing
  * from malformed values.
  */
-export function parseGigExpiresAtMs(gig: Pick<Gig, 'expiresAt'>): number | null {
+export function parseGigExpiresAtMs(gig: GigExpirationInput): number | null {
   const classified = classifyGigExpiration(gig);
   return classified.kind === 'valid' ? classified.expiresAtMs : null;
 }
@@ -62,7 +83,7 @@ export function parseGigExpiresAtMs(gig: Pick<Gig, 'expiresAt'>): number | null 
  * `expiresAt` (`null`/`undefined`) return `false`.
  * Server-side `getGigContactLink` and `expireStaleGigs` remain the authoritative boundaries.
  */
-export function isGigExpired(gig: Pick<Gig, 'expiresAt'>, nowMs = Date.now()): boolean {
+export function isGigExpired(gig: GigExpirationInput, nowMs = Date.now()): boolean {
   const classified = classifyGigExpiration(gig);
   if (classified.kind === 'legacy_missing') return false;
   if (classified.kind === 'malformed') return true;
@@ -73,7 +94,7 @@ export function isGigExpired(gig: Pick<Gig, 'expiresAt'>, nowMs = Date.now()): b
  * Returns true iff the listing is `active` and neither expired nor carrying a malformed `expiresAt`.
  */
 export function isPubliclyActiveGig(
-  gig: Pick<Gig, 'status' | 'expiresAt'>,
+  gig: GigExpirationInput & Pick<Gig, 'status'>,
   nowMs = Date.now()
 ): boolean {
   return gig.status === 'active' && !isGigExpired(gig, nowMs);
@@ -82,7 +103,7 @@ export function isPubliclyActiveGig(
 /**
  * Filters a list of advertisements down to publicly active, non-expired entries.
  */
-export function filterPubliclyActiveGigs<T extends Pick<Gig, 'status' | 'expiresAt'>>(
+export function filterPubliclyActiveGigs<T extends GigExpirationInput & Pick<Gig, 'status'>>(
   gigs: readonly T[],
   nowMs = Date.now()
 ): T[] {

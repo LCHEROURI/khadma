@@ -268,12 +268,12 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
       timeout: 15000
     });
 
-    // Verify Admin Operational Monitoring tab renders all 7 live khadma-oran console links + budget thresholds
+    // Verify Admin Operational Monitoring tab renders all 7 live project-scoped console links + budget thresholds
     const monitoringTab = page.getByRole('button', { name: /Monitoring/i });
     await monitoringTab.scrollIntoViewIfNeeded({ timeout: 10000 });
     await monitoringTab.click({ timeout: 10000 });
     await expect(page.getByText(/5 \$ \/ 15 \$ \/ 30 \$/i)).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('a[href*="khadma-oran"]')).toHaveCount(7);
+    await expect(page.locator('a[href*="demo-khadma"]')).toHaveCount(7);
 
     // Toggle mandatory pre-approval ON via real `adminManageMarketplace` callable
     const toggleBtn = page.getByRole('button', { name: /Activer la pré-modération/i });

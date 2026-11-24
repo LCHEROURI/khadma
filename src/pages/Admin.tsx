@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { sendEmailVerification, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { auth } from '../firebase';
+import { app, auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
 import { ADMIN_EMAIL } from '../lib/constants';
@@ -25,36 +25,36 @@ import type {
 } from '../lib/types';
 import { Icon } from '../components/Icon';
 
-const FIREBASE_PROJECT_ID = 'khadma-oran';
+const ACTIVE_PROJECT_ID = app.options.projectId || 'khadma-oran';
 
 const MONITORING_CONSOLE_LINKS = [
   {
     key: 'admin.monitoring.authUsage',
-    url: `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/usage`
+    url: `https://console.firebase.google.com/project/${ACTIVE_PROJECT_ID}/authentication/usage`
   },
   {
     key: 'admin.monitoring.firestoreUsage',
-    url: `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/usage`
+    url: `https://console.firebase.google.com/project/${ACTIVE_PROJECT_ID}/firestore/usage`
   },
   {
     key: 'admin.monitoring.functionsMonitoring',
-    url: `https://console.cloud.google.com/functions/list?project=${FIREBASE_PROJECT_ID}`
+    url: `https://console.cloud.google.com/functions/list?project=${ACTIVE_PROJECT_ID}`
   },
   {
     key: 'admin.monitoring.cloudBilling',
-    url: `https://console.cloud.google.com/billing?project=${FIREBASE_PROJECT_ID}`
+    url: `https://console.cloud.google.com/billing?project=${ACTIVE_PROJECT_ID}`
   },
   {
     key: 'admin.monitoring.billingBudgets',
-    url: `https://console.cloud.google.com/billing/budgets?project=${FIREBASE_PROJECT_ID}`
+    url: `https://console.cloud.google.com/billing/budgets?project=${ACTIVE_PROJECT_ID}`
   },
   {
     key: 'admin.monitoring.schedulerHistory',
-    url: `https://console.cloud.google.com/cloudscheduler?project=${FIREBASE_PROJECT_ID}`
+    url: `https://console.cloud.google.com/cloudscheduler?project=${ACTIVE_PROJECT_ID}`
   },
   {
     key: 'admin.monitoring.appCheckMetrics',
-    url: `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/appcheck/metrics`
+    url: `https://console.firebase.google.com/project/${ACTIVE_PROJECT_ID}/appcheck/metrics`
   }
 ] as const;
 

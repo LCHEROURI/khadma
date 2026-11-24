@@ -365,14 +365,15 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
   it('rejects malformed IDs, malformed channels, invalid phones/emails, and header/URL injection attempts', async () => {
     const store = createMemoryStore(
       {
-        g_bad_phone: { status: 'active', isSample: false, contactMethods: ['whatsapp'] },
-        g_bad_email: { status: 'active', isSample: false, contactMethods: ['email'] },
-        g_inject_email: { status: 'active', isSample: false, contactMethods: ['email'] },
+        g_bad_phone: { status: 'active', isSample: false, contactMethods: ['whatsapp'], expiresAt: FUTURE_EXPIRY },
+        g_bad_email: { status: 'active', isSample: false, contactMethods: ['email'], expiresAt: FUTURE_EXPIRY },
+        g_inject_email: { status: 'active', isSample: false, contactMethods: ['email'], expiresAt: FUTURE_EXPIRY },
         g_inject_title: {
           title: 'Offre\r\nBcc:attacker@evil.com\nX-Test:1',
           status: 'active',
           isSample: false,
-          contactMethods: ['email']
+          contactMethods: ['email'],
+          expiresAt: FUTURE_EXPIRY
         }
       },
       {
@@ -416,7 +417,7 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
 
   it('closes repetitive single-target abuse via in-memory shedder (0 Firestore ops) and cross-instance total-request cap', async () => {
     const store = createMemoryStore(
-      { g_rep: { status: 'active', isSample: false, contactMethods: ['whatsapp'] } },
+      { g_rep: { status: 'active', isSample: false, contactMethods: ['whatsapp'], expiresAt: FUTURE_EXPIRY } },
       { g_rep: { contactPhone: '+213555010101', whatsappConsent: true } }
     );
 
@@ -448,7 +449,7 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
     // 2. Cross-instance total-request cap (simulated via bypassInMemoryGuard: true) still hard-bounds
     // repetitive requests at MAX_TOTAL_REQUESTS_PER_IP_PER_HOUR (60) per IP/hr.
     const crossStore = createMemoryStore(
-      { g_rep: { status: 'active', isSample: false, contactMethods: ['whatsapp'] } },
+      { g_rep: { status: 'active', isSample: false, contactMethods: ['whatsapp'], expiresAt: FUTURE_EXPIRY } },
       { g_rep: { contactPhone: '+213555010101', whatsappConsent: true } }
     );
     for (let i = 0; i < MAX_TOTAL_REQUESTS_PER_IP_PER_HOUR; i++) {
@@ -481,7 +482,7 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
     const gigs: Record<string, GigRecord> = {};
     const contacts: Record<string, PrivateContactRecord> = {};
     for (let i = 0; i <= MAX_CONTACTS_PER_IP_PER_HOUR + 2; i++) {
-      gigs[`g_${i}`] = { status: 'active', isSample: false, contactMethods: ['whatsapp'] };
+      gigs[`g_${i}`] = { status: 'active', isSample: false, contactMethods: ['whatsapp'], expiresAt: FUTURE_EXPIRY };
       contacts[`g_${i}`] = { contactPhone: '+213555010101', whatsappConsent: true };
     }
     const store = createMemoryStore(gigs, contacts);
@@ -510,7 +511,7 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
 
     // 2. Popular listing receiving concurrent traffic from 65 distinct IPs: 60 succeed, 5 throttled, resets after 1h
     const burstStore = createMemoryStore(
-      { g_hot: { status: 'active', isSample: false, contactMethods: ['whatsapp'] } },
+      { g_hot: { status: 'active', isSample: false, contactMethods: ['whatsapp'], expiresAt: FUTURE_EXPIRY } },
       { g_hot: { contactPhone: '+213555010101', whatsappConsent: true } }
     );
     const concurrentCalls = Array.from({ length: MAX_CONTACTS_PER_GIG_PER_HOUR + 5 }, (_, idx) =>
@@ -661,6 +662,13 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
         g_legacy_null: {
           status: 'active',
           isSample: false,
+          expiresAt: null
+        },
+        g_v14_null: {
+          status: 'active',
+          isSample: false,
+          city: 'oran',
+          wilayaCode: '31',
           contactMethods: ['whatsapp'],
           expiresAt: null
         }
@@ -668,9 +676,21 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
       {
         g_malformed_str: { contactPhone: '+213550123456', whatsappConsent: true },
         g_malformed_neg: { contactPhone: '+213550123456', whatsappConsent: true },
-        g_legacy_null: { contactPhone: '+213550123456', whatsappConsent: true }
+        g_legacy_null: { posterPhone: '+213550123456' },
+        g_v14_null: { contactPhone: '+213550123456', whatsappConsent: true }
       }
     );
+
+    await expect(
+      handleGetGigContactLink(store, {
+        hasAppCheck: true,
+        clientIp: '41.100.1.9',
+        gigId: 'g_v14_null',
+        channel: 'whatsapp',
+        lang: 'fr',
+        nowMs: NOW
+      })
+    ).rejects.toMatchObject({ code: 'not-found' });
 
     await expect(
       handleGetGigContactLink(store, {

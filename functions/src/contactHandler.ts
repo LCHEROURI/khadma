@@ -103,6 +103,8 @@ export interface GigRecord {
   status?: unknown;
   isSample?: unknown;
   expiresAt?: unknown;
+  city?: unknown;
+  wilayaCode?: unknown;
   contactMethods?: unknown;
   posterPhone?: unknown; // Legacy V1.3 fallback only
 }
@@ -252,6 +254,32 @@ export function classifyExpiresAt(value: unknown): ExpirationClassification {
     }
   }
   return { kind: 'malformed' };
+}
+
+export function isV14Record(gig: {
+  city?: unknown;
+  wilayaCode?: unknown;
+  contactMethods?: unknown;
+}): boolean {
+  return (
+    gig.city !== undefined ||
+    gig.wilayaCode !== undefined ||
+    gig.contactMethods !== undefined
+  );
+}
+
+export function classifyGigExpiresAt(gig: {
+  expiresAt?: unknown;
+  city?: unknown;
+  wilayaCode?: unknown;
+  contactMethods?: unknown;
+  isSample?: unknown;
+}): ExpirationClassification {
+  const base = classifyExpiresAt(gig.expiresAt);
+  if (base.kind === 'legacy_missing' && gig.isSample !== true && isV14Record(gig)) {
+    return { kind: 'malformed' };
+  }
+  return base;
 }
 
 export function parseExpiresAtMs(value: unknown): number | null {
@@ -434,8 +462,9 @@ export async function handleGetGigContactLink(
   }
 
   // Enforce expiration even if status has not yet transitioned to 'expired'.
-  // Legacy V1.3 docs with missing expiresAt remain eligible; malformed timestamps fail closed.
-  const expClass = classifyExpiresAt(gig.expiresAt);
+  // Only genuine pre-V1.4 legacy docs (no V1.4 schema markers) with missing expiresAt remain eligible;
+  // new V1.4 records with missing/null expiresAt or any malformed timestamp fail closed.
+  const expClass = classifyGigExpiresAt(gig);
   if (expClass.kind === 'malformed' || (expClass.kind === 'valid' && expClass.expiresAtMs <= nowMs)) {
     throw new ContactHandlerError('not-found', 'Contact unavailable.');
   }

@@ -119,6 +119,13 @@ describe('Phase 5 — Bounded Browse Caching & Defensive Expiration Filtering', 
       expiresAt: { toMillis: () => t0 + 30_000 } as unknown as Gig['expiresAt']
     });
     const legacyNoExpiry = makeGig({ id: 'legacy_null', expiresAt: null });
+    const v14MissingExpiry = makeGig({
+      id: 'v14_missing_exp',
+      city: 'oran',
+      wilayaCode: '31',
+      contactMethods: ['whatsapp'],
+      expiresAt: null
+    });
     const malformedString = makeGig({
       id: 'malformed_str',
       expiresAt: 'not-a-timestamp' as unknown as Gig['expiresAt']
@@ -128,10 +135,14 @@ describe('Phase 5 — Bounded Browse Caching & Defensive Expiration Filtering', 
       expiresAt: -500 as unknown as Gig['expiresAt']
     });
 
-    // Legitimate legacy missing timestamp -> non-expiring
+    // Legitimate legacy missing timestamp (no V1.4 markers) -> non-expiring
     expect(classifyGigExpiration(legacyNoExpiry)).toEqual({ kind: 'legacy_missing' });
     expect(parseGigExpiresAtMs(legacyNoExpiry)).toBeNull();
     expect(isGigExpired(legacyNoExpiry, t0 + 999_999)).toBe(false);
+
+    // New V1.4 record with missing/null expiresAt -> FAILS CLOSED (malformed, never legacy-exempt!)
+    expect(classifyGigExpiration(v14MissingExpiry)).toEqual({ kind: 'malformed' });
+    expect(isGigExpired(v14MissingExpiry, t0)).toBe(true);
 
     // Malformed / corrupted timestamps -> FAIL CLOSED (treated as expired, never non-expiring!)
     expect(classifyGigExpiration(malformedString)).toEqual({ kind: 'malformed' });
