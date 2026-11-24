@@ -21,7 +21,7 @@ export function EmployerAuthPanel({
 }: {
   onVerified?: () => void;
 }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const { user, email: authEmail, emailVerified, isAnonymous, refreshAuth } = useAuth();
   const [mode, setMode] = useState<AuthMode>('register');
   const [email, setEmail] = useState('');
@@ -68,7 +68,7 @@ export function EmployerAuthPanel({
     setBusy(true);
     try {
       if (mode === 'register') {
-        const res = await registerEmployerWithEmail(auth, email, password);
+        const res = await registerEmployerWithEmail(auth, email, password, lang);
         setPassword('');
         if (res.verificationSent) {
           setLastSentMs(Date.now());
@@ -97,7 +97,7 @@ export function EmployerAuthPanel({
     }
     setBusy(true);
     try {
-      await requestPasswordReset(auth, email);
+      await requestPasswordReset(auth, email, lang);
       setNotice(t('auth.resetSent'));
     } catch (e) {
       const code = (e as { code?: string }).code ?? '';
@@ -113,7 +113,7 @@ export function EmployerAuthPanel({
     setErr('');
     setNotice('');
     try {
-      await resendVerificationEmail(user);
+      await resendVerificationEmail(user, auth, lang);
       setLastSentMs(Date.now());
       setNotice(t('auth.verifyResent'));
     } catch (e) {

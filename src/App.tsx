@@ -14,6 +14,7 @@ const PostGig = lazy(() => import('./pages/PostGig').then((m) => ({ default: m.P
 const Saved = lazy(() => import('./pages/Saved').then((m) => ({ default: m.Saved })));
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 const Admin = lazy(() => import('./pages/Admin').then((m) => ({ default: m.Admin })));
+const AuthAction = lazy(() => import('./pages/AuthAction').then((m) => ({ default: m.AuthAction })));
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -57,6 +58,7 @@ export default function App() {
                   <Route path="/saved" element={<Saved />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/admin" element={<Admin />} />
+                  <Route path="/auth/action" element={<AuthAction />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Suspense>

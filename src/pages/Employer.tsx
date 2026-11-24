@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
@@ -32,7 +32,8 @@ import { EmployerAuthPanel } from '../components/EmployerAuthPanel';
 import { Icon } from '../components/Icon';
 
 export function Employer() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     user,
     email,
@@ -69,6 +70,15 @@ export function Employer() {
     },
     profile
   );
+
+  useEffect(() => {
+    if (searchParams.get('verified') !== '1' || !user) return;
+    void refreshAuth().finally(() => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('verified');
+      setSearchParams(next, { replace: true });
+    });
+  }, [searchParams, setSearchParams, user, refreshAuth]);
 
   useEffect(() => {
     if (!user || !isEmployer) {
@@ -161,7 +171,7 @@ export function Employer() {
     }
     setLinkBusy(true);
     try {
-      await linkEmailToLegacyPhoneAccount(user, linkEmail, linkPassword);
+      await linkEmailToLegacyPhoneAccount(user, linkEmail, linkPassword, auth, lang);
       setLinkPassword('');
       setLinkSuccess(true);
       await refreshAuth();

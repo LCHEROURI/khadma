@@ -11,6 +11,8 @@ import {
 } from 'firebase/auth';
 import { LEGACY_EMPLOYER_MAX_ACTIVE_GIGS, NEW_EMPLOYER_MAX_ACTIVE_GIGS } from './constants';
 import { publicBrowseCache } from './browseCache';
+import { buildActionCodeSettings } from './authAction';
+import type { Lang } from './strings';
 import type { EmployerProfile } from './types';
 
 export const VERIFICATION_RESEND_COOLDOWN_MS = 60_000;
@@ -166,15 +168,21 @@ export function resolveEmployerEligibility(
   };
 }
 
+export function syncAuthLanguage(authInstance: Auth, lang: Lang = 'fr'): void {
+  authInstance.languageCode = lang;
+}
+
 export async function registerEmployerWithEmail(
   authInstance: Auth,
   email: string,
-  password: string
+  password: string,
+  lang: Lang = 'fr'
 ): Promise<{ user: User; verificationSent: boolean }> {
+  syncAuthLanguage(authInstance, lang);
   const cred = await createUserWithEmailAndPassword(authInstance, email.trim(), password);
   let verificationSent = false;
   try {
-    await sendEmailVerification(cred.user);
+    await sendEmailVerification(cred.user, buildActionCodeSettings());
     verificationSent = true;
   } catch {
     // User account is created; caller shows resend UI cleanly without losing session.
@@ -197,12 +205,24 @@ export async function signOutEmployer(authInstance: Auth): Promise<void> {
   await signOut(authInstance);
 }
 
-export async function requestPasswordReset(authInstance: Auth, email: string): Promise<void> {
-  await sendPasswordResetEmail(authInstance, email.trim());
+export async function requestPasswordReset(
+  authInstance: Auth,
+  email: string,
+  lang: Lang = 'fr'
+): Promise<void> {
+  syncAuthLanguage(authInstance, lang);
+  await sendPasswordResetEmail(authInstance, email.trim(), buildActionCodeSettings());
 }
 
-export async function resendVerificationEmail(user: User): Promise<void> {
-  await sendEmailVerification(user);
+export async function resendVerificationEmail(
+  user: User,
+  authInstance?: Auth,
+  lang: Lang = 'fr'
+): Promise<void> {
+  if (authInstance) {
+    syncAuthLanguage(authInstance, lang);
+  }
+  await sendEmailVerification(user, buildActionCodeSettings());
 }
 
 export async function refreshEmailVerification(user: User): Promise<boolean> {
@@ -219,13 +239,18 @@ export async function refreshEmailVerification(user: User): Promise<boolean> {
 export async function linkEmailToLegacyPhoneAccount(
   user: User,
   email: string,
-  password: string
+  password: string,
+  authInstance?: Auth,
+  lang: Lang = 'fr'
 ): Promise<{ user: User; verificationSent: boolean }> {
+  if (authInstance) {
+    syncAuthLanguage(authInstance, lang);
+  }
   const credential = EmailAuthProvider.credential(email.trim(), password);
   const result = await linkWithCredential(user, credential);
   let verificationSent = false;
   try {
-    await sendEmailVerification(result.user);
+    await sendEmailVerification(result.user, buildActionCodeSettings());
     verificationSent = true;
   } catch {
     verificationSent = false;

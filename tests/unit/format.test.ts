@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errKey, formatNeighborhood, formatPay } from '../../src/lib/format';
+import { errKey, formatListingCount, formatNeighborhood, formatPay } from '../../src/lib/format';
 import { STRINGS, tpl } from '../../src/lib/strings';
 
 describe('formatPay', () => {
@@ -30,5 +30,28 @@ describe('errKey & tpl', () => {
 
   it('interpolates template variables safely', () => {
     expect(tpl('{n} men 5', { n: 2 })).toBe('2 men 5');
+  });
+});
+
+describe('formatListingCount', () => {
+  const makeT = (lang: 'fr' | 'ar') => (k: string, vars?: Record<string, string | number>) =>
+    tpl(STRINGS[lang][k] ?? k, vars);
+
+  it('pluralizes French listing counts accurately (0, 1, 2, 10)', () => {
+    const frT = makeT('fr');
+    expect(formatListingCount(0, 'fr', frT)).toBe('0 annonce');
+    expect(formatListingCount(1, 'fr', frT)).toBe('1 annonce');
+    expect(formatListingCount(2, 'fr', frT)).toBe('2 annonces');
+    expect(formatListingCount(10, 'fr', frT)).toBe('10 annonces');
+  });
+
+  it('pluralizes Arabic listing counts accurately across plural categories', () => {
+    const arT = makeT('ar');
+    expect(formatListingCount(0, 'ar', arT)).toBe('0 إعلان');
+    expect(formatListingCount(1, 'ar', arT)).toBe('إعلان واحد');
+    expect(formatListingCount(2, 'ar', arT)).toBe('إعلانان');
+    expect(formatListingCount(3, 'ar', arT)).toBe('3 إعلانات');
+    expect(formatListingCount(11, 'ar', arT)).toBe('11 إعلاناً');
+    expect(formatListingCount(100, 'ar', arT)).toBe('100 إعلان');
   });
 });

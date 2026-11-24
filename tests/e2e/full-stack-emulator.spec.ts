@@ -203,11 +203,6 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
     // 3. Account-free job seeker opens gig in a fresh unauthenticated context & retrieves BOTH contact links via real `getGigContactLink`
     const seekerContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const seekerPage = await seekerContext.newPage();
-    let interceptedWaUrl = '';
-    await seekerPage.route('https://wa.me/**', async (route) => {
-      interceptedWaUrl = route.request().url();
-      await route.abort();
-    });
     await seekerPage.goto(gigUrl);
     await expect(seekerPage.getByRole('button', { name: /Contacter sur WhatsApp/i })).toBeVisible({
       timeout: 15000
@@ -220,9 +215,38 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
       seekerPage.getByRole('button', { name: /Contacter sur WhatsApp/i }).click()
     ]);
     expect(waResp.status()).toBe(200);
-    await expect.poll(() => interceptedWaUrl, { timeout: 10000 }).toContain(
-      'https://wa.me/213550123456'
+    const waDialog = seekerPage.getByRole('dialog', { name: /Contacter l’employeur/i });
+    await expect(waDialog).toBeVisible({ timeout: 10000 });
+    const waContinueLink = waDialog.getByRole('link', { name: /Continuer vers WhatsApp/i });
+    await expect(waContinueLink).toHaveAttribute('href', /https:\/\/wa\.me\/213550123456/);
+    await expect(waContinueLink).toHaveAttribute('target', '_blank');
+    await waDialog.getByRole('button', { name: /Retour à l’annonce/i }).click();
+    await expect(waDialog).toBeHidden();
+
+    // Verify 3-option Email Contact Sheet via real browser UI + getGigContactLink callable
+    const [emailResp] = await Promise.all([
+      seekerPage.waitForResponse(
+        (r) => r.url().includes('getGigContactLink') && r.request().method() === 'POST',
+        { timeout: 15000 }
+      ),
+      seekerPage.getByRole('button', { name: /Contacter par e-mail/i }).click()
+    ]);
+    expect(emailResp.status()).toBe(200);
+    const emailDialog = seekerPage.getByRole('dialog', { name: /Contacter par e-mail/i });
+    await expect(emailDialog).toBeVisible({ timeout: 10000 });
+    await expect(emailDialog.getByRole('link', { name: /Ouvrir ma messagerie/i })).toHaveAttribute(
+      'href',
+      /^mailto:recrutement@oran-plomb\.dz/
     );
+    await expect(emailDialog.getByRole('link', { name: /Continuer avec Gmail/i })).toHaveAttribute(
+      'href',
+      /^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=recrutement%40oran-plomb\.dz/
+    );
+    await expect(
+      emailDialog.getByRole('button', { name: /Copier l’adresse e-mail/i })
+    ).toBeVisible();
+    await emailDialog.getByRole('button', { name: /Retour à l’annonce/i }).click();
+    await expect(emailDialog).toBeHidden();
 
     // Also verify real `getGigContactLink` for email channel directly via Functions Emulator
     const emailContactRes = await callCallableDirect('getGigContactLink', {

@@ -5,7 +5,7 @@ import { useLang } from '../lib/i18n';
 import { BROWSE_PAGE_SIZE, CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
 import { getActiveGigsPage } from '../lib/db';
 import { BROWSE_CACHE_TTL_MS } from '../lib/browseCache';
-import { formatNeighborhood } from '../lib/format';
+import { formatListingCount, formatNeighborhood } from '../lib/format';
 import { filterPubliclyActiveGigs } from '../lib/expiration';
 import { filterGigsByMode, type BrowseMode } from '../lib/listingType';
 import {
@@ -30,7 +30,7 @@ const INITIAL_PAGINATION_STATE: BrowsePaginationState<Cursor> = {
 };
 
 export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [pageState, setPageState] = useState<BrowsePaginationState<Cursor>>(INITIAL_PAGINATION_STATE);
   const [searchQuery, setSearchQuery] = useState('');
   const [cat, setCat] = useState('');
@@ -258,7 +258,7 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
 
       <div className="results-bar">
         <div className="results-count" role="status" aria-live="polite">
-          {t('browse.results', { n: filtered.length })}
+          {formatListingCount(filtered.length, lang, t)}
         </div>
         <button
           type="button"

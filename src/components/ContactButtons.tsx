@@ -1,15 +1,13 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../lib/i18n';
 import { requestGigContactLink } from '../lib/db';
-import { resolveEnabledContactMethods } from '../lib/contactLink';
+import {
+  buildGmailComposeUrl,
+  parseMailtoUrl,
+  resolveEnabledContactMethods
+} from '../lib/contactLink';
 import type { ContactMethod } from '../lib/types';
 import { Icon } from './Icon';
-
-function isCoarsePointer(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia('(pointer: coarse)').matches
-    : false;
-}
 
 export function ContactButtons({
   gigId,
@@ -22,41 +20,62 @@ export function ContactButtons({
   const [busyChannel, setBusyChannel] = useState<ContactMethod | null>(null);
   const [err, setErr] = useState('');
   const [failedChannel, setFailedChannel] = useState<ContactMethod | null>(null);
-  const [fallbackLink, setFallbackLink] = useState<{ channel: ContactMethod; url: string } | null>(null);
+  // Session-local, memory-only cache per gig mount so repeated clicks do not fire duplicate callable calls.
+  const [cachedUrls, setCachedUrls] = useState<Partial<Record<ContactMethod, string>>>({});
+  const [activeSheet, setActiveSheet] = useState<ContactMethod | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [showCopyFallback, setShowCopyFallback] = useState(false);
   const inFlightRef = useRef(false);
+
+  useEffect(() => {
+    setCachedUrls({});
+    setActiveSheet(null);
+    setCopied(false);
+    setShowCopyFallback(false);
+    setErr('');
+    setFailedChannel(null);
+  }, [gigId]);
+
+  useEffect(() => {
+    if (!activeSheet) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveSheet(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeSheet]);
 
   const methods = resolveEnabledContactMethods(contactMethods);
   if (methods.length === 0) {
     return <p className="muted">{t('contact.unavailable')}</p>;
   }
 
+  const closeSheet = () => {
+    setActiveSheet(null);
+  };
+
   const handleContact = async (channel: ContactMethod) => {
     if (inFlightRef.current || busyChannel !== null) return;
-    inFlightRef.current = true;
-    setBusyChannel(channel);
     setErr('');
     setFailedChannel(null);
-    setFallbackLink(null);
+    setCopied(false);
+    setShowCopyFallback(false);
 
-    const mobile = isCoarsePointer();
-    const popup = channel === 'whatsapp' && !mobile ? window.open('', '_blank') : null;
-    if (popup) {
-      popup.opener = null;
+    if (cachedUrls[channel]) {
+      setActiveSheet(channel);
+      return;
     }
+
+    inFlightRef.current = true;
+    setBusyChannel(channel);
 
     try {
       const url = await requestGigContactLink(gigId, lang, channel);
-      // Always expose a safe direct fallback link in case the browser blocks external app launch.
-      setFallbackLink({ channel, url });
-      if (popup && !popup.closed) {
-        popup.location.replace(url);
-      } else {
-        window.location.assign(url);
-      }
+      setCachedUrls((prev) => ({ ...prev, [channel]: url }));
+      setActiveSheet(channel);
     } catch (e) {
-      if (popup && !popup.closed) {
-        popup.close();
-      }
       const code = (e as { code?: string }).code ?? '';
       setFailedChannel(channel);
       if (code === 'functions/resource-exhausted') {
@@ -70,6 +89,27 @@ export function ContactButtons({
       inFlightRef.current = false;
       setBusyChannel(null);
     }
+  };
+
+  const waUrl = cachedUrls.whatsapp ?? null;
+  const emailUrl = cachedUrls.email ?? null;
+  const parsedEmail = emailUrl ? parseMailtoUrl(emailUrl) : null;
+  const gmailUrl = emailUrl ? buildGmailComposeUrl(emailUrl) : null;
+
+  const handleCopyEmail = async () => {
+    if (!parsedEmail) return;
+    setCopied(false);
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(parsedEmail.to);
+        setCopied(true);
+        setShowCopyFallback(false);
+        return;
+      }
+    } catch {
+      // Fallback below displays a selectable read-only field when clipboard access is denied.
+    }
+    setShowCopyFallback(true);
   };
 
   return (
@@ -100,20 +140,6 @@ export function ContactButtons({
         </button>
       )}
 
-      {fallbackLink && !err && (
-        <p className="contact-fallback muted small">
-          <a
-            href={fallbackLink.url}
-            target={fallbackLink.channel === 'whatsapp' ? '_blank' : undefined}
-            rel={fallbackLink.channel === 'whatsapp' ? 'noopener noreferrer' : undefined}
-          >
-            {fallbackLink.channel === 'whatsapp'
-              ? t('contact.openWhatsappFallback')
-              : t('contact.openEmailFallback')}
-          </a>
-        </p>
-      )}
-
       {err && (
         <div className="load-more-error" role="alert">
           <p className="form-error">{err}</p>
@@ -127,6 +153,121 @@ export function ContactButtons({
               {t('common.retry')}
             </button>
           )}
+        </div>
+      )}
+
+      {activeSheet === 'whatsapp' && waUrl && (
+        <div
+          className="sheet-backdrop"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeSheet();
+          }}
+        >
+          <div
+            className="contact-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contact-sheet-title"
+          >
+            <h2 id="contact-sheet-title" className="contact-sheet-title">
+              {t('contact.waSheetTitle')}
+            </h2>
+            <p className="muted contact-sheet-body">{t('contact.waSheetBody')}</p>
+            <div className="contact-sheet-actions">
+              <a
+                href={waUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-whatsapp btn-block"
+              >
+                <Icon name="whatsapp" size={20} />
+                {t('contact.waSheetContinue')}
+              </a>
+              <button
+                type="button"
+                className="btn btn-ghost btn-block"
+                onClick={closeSheet}
+              >
+                {t('contact.backToListing')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSheet === 'email' && emailUrl && parsedEmail && (
+        <div
+          className="sheet-backdrop"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeSheet();
+          }}
+        >
+          <div
+            className="contact-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contact-sheet-title"
+          >
+            <h2 id="contact-sheet-title" className="contact-sheet-title">
+              {t('contact.emailSheetTitle')}
+            </h2>
+            <p className="muted contact-sheet-body">{t('contact.emailSheetSubtitle')}</p>
+            <div className="contact-sheet-actions">
+              <a href={emailUrl} className="btn btn-primary btn-block">
+                <Icon name="mail" size={18} />
+                {t('contact.emailSheetMailApp')}
+              </a>
+              {gmailUrl && (
+                <a
+                  href={gmailUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-soft-green btn-block"
+                >
+                  <Icon name="mail" size={18} />
+                  {t('contact.emailSheetGmail')}
+                </a>
+              )}
+              <button
+                type="button"
+                className="btn btn-ghost btn-block"
+                onClick={() => void handleCopyEmail()}
+              >
+                {t('contact.emailSheetCopy')}
+              </button>
+
+              {copied && (
+                <p className="status-note contact-copy-status" role="status">
+                  {t('contact.emailCopied')}
+                </p>
+              )}
+
+              {showCopyFallback && (
+                <div className="contact-copy-fallback">
+                  <p className="muted small">{t('contact.emailCopyFallbackHint')}</p>
+                  <input
+                    type="text"
+                    readOnly
+                    dir="ltr"
+                    className="contact-copy-input"
+                    value={parsedEmail.to}
+                    aria-label={t('contact.emailSheetCopy')}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="btn btn-ghost btn-block"
+                onClick={closeSheet}
+              >
+                {t('contact.backToListing')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
