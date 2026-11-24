@@ -89,12 +89,12 @@ describe('KHADMA Firestore Security Rules', () => {
     await assertFails(getDoc(doc(anonDb, 'gigContacts', 'g_active')));
   });
 
-  it('enforces strict transactional +1 counter cap (max 5) and blocks posterPhone on public gigs', async () => {
+  it('denies all direct client transactional writes to gigs, gigContacts, and phoneCounters (V1.4 server-authoritative)', async () => {
     const phoneCtx = testEnv.authenticatedContext('phone-user-1', { phone_number: PHONE });
     const db = phoneCtx.firestore();
 
-    // Legitimate transactional post #1
-    await assertSucceeds(
+    // Direct client transactional post is DENIED after V1.4 cutover (must go through manageEmployerListing callable)
+    await assertFails(
       runTransaction(db, async (tx) => {
         const now = serverTimestamp();
         tx.set(doc(db, 'phoneCounters', PHONE), { count: 1 });
@@ -108,7 +108,7 @@ describe('KHADMA Firestore Security Rules', () => {
       })
     );
 
-    // Attack: create gig_2 WITHOUT incrementing phoneCounters (rate-limit bypass) -> MUST DENY
+    // Attack: create gig_2 WITHOUT incrementing phoneCounters -> MUST DENY
     await assertFails(
       runTransaction(db, async (tx) => {
         const now = serverTimestamp();
@@ -126,31 +126,11 @@ describe('KHADMA Firestore Security Rules', () => {
     await assertFails(
       runTransaction(db, async (tx) => {
         const now = serverTimestamp();
-        tx.update(doc(db, 'phoneCounters', PHONE), { count: 2 });
         tx.set(doc(db, 'gigs', 'gig_pii'), {
           ...makeGigPayload('phone-user-1'),
           posterPhone: PHONE
         });
         tx.set(doc(db, 'gigContacts', 'gig_pii'), {
-          posterPhone: PHONE,
-          counterId: PHONE,
-          posterUid: 'phone-user-1',
-          createdAt: now
-        });
-      })
-    );
-
-    // Seed counter at 5 and verify 6th gig is denied
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), 'phoneCounters', PHONE), { count: 5 });
-    });
-
-    await assertFails(
-      runTransaction(db, async (tx) => {
-        const now = serverTimestamp();
-        tx.update(doc(db, 'phoneCounters', PHONE), { count: 6 });
-        tx.set(doc(db, 'gigs', 'gig_6'), makeGigPayload('phone-user-1'));
-        tx.set(doc(db, 'gigContacts', 'gig_6'), {
           posterPhone: PHONE,
           counterId: PHONE,
           posterUid: 'phone-user-1',
@@ -219,7 +199,8 @@ describe('KHADMA Firestore Security Rules', () => {
         )
       )
     );
-    await assertSucceeds(updateDoc(doc(verifiedAdmin, 'gigs', 'g1'), { status: 'active', flags: 0 }));
+    // Direct client admin mutation is denied in V1.4 cutover (enforcing adminManageMarketplace callable)
+    await assertFails(updateDoc(doc(verifiedAdmin, 'gigs', 'g1'), { status: 'active', flags: 0 }));
 
     // Server-only contactRateLimits must be denied to all clients (including admin)
     const anonDb = testEnv.unauthenticatedContext().firestore();
@@ -229,12 +210,12 @@ describe('KHADMA Firestore Security Rules', () => {
     await assertFails(setDoc(doc(verifiedAdmin, 'contactRateLimits', 'uid_p1'), { gigIds: [], windowStartMs: 0 }));
   });
 
-  it('validates optional listingType (job/service) and scopes hidden/removed reads to phone-verified owner', async () => {
+  it('scopes hidden/removed reads to phone-verified owner and denies all direct client gig writes', async () => {
     const ownerDb = testEnv.authenticatedContext('owner-uid', { phone_number: PHONE }).firestore();
     const otherPhoneDb = testEnv.authenticatedContext('other-uid', { phone_number: '+213555010001' }).firestore();
 
-    // Creating a job listing succeeds
-    await assertSucceeds(
+    // Direct client creation is denied (must go through manageEmployerListing callable)
+    await assertFails(
       runTransaction(ownerDb, async (tx) => {
         const now = serverTimestamp();
         tx.set(doc(ownerDb, 'phoneCounters', PHONE), { count: 1 });
@@ -248,39 +229,15 @@ describe('KHADMA Firestore Security Rules', () => {
       })
     );
 
-    // Creating a service listing succeeds
-    await assertSucceeds(
-      runTransaction(ownerDb, async (tx) => {
-        const now = serverTimestamp();
-        tx.set(doc(ownerDb, 'phoneCounters', PHONE), { count: 2 });
-        tx.set(doc(ownerDb, 'gigs', 'gig_svc'), { ...makeGigPayload('owner-uid'), listingType: 'service' });
-        tx.set(doc(ownerDb, 'gigContacts', 'gig_svc'), {
-          posterPhone: PHONE,
-          counterId: PHONE,
-          posterUid: 'owner-uid',
-          createdAt: now
-        });
-      })
-    );
-
-    // Creating a gig with invalid listingType MUST be denied
-    await assertFails(
-      runTransaction(ownerDb, async (tx) => {
-        const now = serverTimestamp();
-        tx.set(doc(ownerDb, 'phoneCounters', PHONE), { count: 3 });
-        tx.set(doc(ownerDb, 'gigs', 'gig_bad_type'), { ...makeGigPayload('owner-uid'), listingType: 'invalid' });
-        tx.set(doc(ownerDb, 'gigContacts', 'gig_bad_type'), {
-          posterPhone: PHONE,
-          counterId: PHONE,
-          posterUid: 'owner-uid',
-          createdAt: now
-        });
-      })
-    );
-
-    // Seed a removed gig owned by owner-uid
+    // Seed active and removed gigs owned by owner-uid via server/admin context
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), 'gigs', 'gig_removed_own'), {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'gigs', 'gig_job'), {
+        ...makeGigPayload('owner-uid'),
+        listingType: 'job',
+        status: 'active'
+      });
+      await setDoc(doc(db, 'gigs', 'gig_removed_own'), {
         ...makeGigPayload('owner-uid'),
         listingType: 'job',
         status: 'removed'
@@ -435,11 +392,11 @@ describe('KHADMA Firestore Security Rules', () => {
     await assertSucceeds(getDoc(doc(adminDb, 'gigs', 'g_v14_pending')));
   });
 
-  it('V1.4 Phase 1: enforces Oran-only city/wilayaCode and blocks client expiresAt spoofing', async () => {
+  it('V1.4 Cutover: blocks all direct client creates including Oran-valid and expiresAt-spoofed payloads', async () => {
     const phoneDb = testEnv.authenticatedContext('phone-geo-1', { phone_number: PHONE }).firestore();
 
-    // Optional city='oran' + wilayaCode='31' succeeds on V1.3 phone create
-    await assertSucceeds(
+    // Even valid Oran payloads MUST be denied via direct client write after V1.4 cutover
+    await assertFails(
       runTransaction(phoneDb, async (tx) => {
         const now = serverTimestamp();
         tx.set(doc(phoneDb, 'phoneCounters', PHONE), { count: 1 });
@@ -460,18 +417,10 @@ describe('KHADMA Firestore Security Rules', () => {
     // Non-Oran city MUST be denied
     await assertFails(
       runTransaction(phoneDb, async (tx) => {
-        const now = serverTimestamp();
-        tx.update(doc(phoneDb, 'phoneCounters', PHONE), { count: 2 });
         tx.set(doc(phoneDb, 'gigs', 'gig_bad_city'), {
           ...makeGigPayload('phone-geo-1'),
           city: 'algiers',
           wilayaCode: '16'
-        });
-        tx.set(doc(phoneDb, 'gigContacts', 'gig_bad_city'), {
-          posterPhone: PHONE,
-          counterId: PHONE,
-          posterUid: 'phone-geo-1',
-          createdAt: now
         });
       })
     );
@@ -479,17 +428,9 @@ describe('KHADMA Firestore Security Rules', () => {
     // Client-supplied expiresAt MUST be denied (server-managed only)
     await assertFails(
       runTransaction(phoneDb, async (tx) => {
-        const now = serverTimestamp();
-        tx.update(doc(phoneDb, 'phoneCounters', PHONE), { count: 2 });
         tx.set(doc(phoneDb, 'gigs', 'gig_bad_expiry'), {
           ...makeGigPayload('phone-geo-1'),
           expiresAt: Timestamp.fromMillis(Date.now() + 365 * 24 * 60 * 60 * 1000)
-        });
-        tx.set(doc(phoneDb, 'gigContacts', 'gig_bad_expiry'), {
-          posterPhone: PHONE,
-          counterId: PHONE,
-          posterUid: 'phone-geo-1',
-          createdAt: now
         });
       })
     );

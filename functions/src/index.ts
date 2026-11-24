@@ -466,6 +466,68 @@ const firestoreAdminStore: AdminStore = {
         }
       });
     });
+  },
+  async seedSamples(items, adminUid, nowMs) {
+    const batch = db.batch();
+    const expiresAt = Timestamp.fromMillis(nowMs + 30 * 24 * 60 * 60 * 1000);
+    for (const s of items) {
+      const ref = db.collection('gigs').doc();
+      batch.set(ref, {
+        title: s.title,
+        description: s.description,
+        category: s.category,
+        listingType: 'job',
+        city: 'oran',
+        wilayaCode: '31',
+        payMin: s.payMin,
+        payMax: s.payMax,
+        neighborhood: s.neighborhood,
+        posterUid: 'sample',
+        flags: 0,
+        status: 'active',
+        verified: false,
+        isSample: true,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        expiresAt
+      });
+    }
+    const auditRef = db.collection('auditLogs').doc();
+    batch.set(auditRef, {
+      actorUid: adminUid,
+      actorRole: 'admin',
+      action: 'seedSamples',
+      targetType: 'gig',
+      targetId: 'samples',
+      reason: 'Seed sample listings',
+      metadata: { count: items.length },
+      createdAt: FieldValue.serverTimestamp()
+    });
+    await batch.commit();
+    return items.length;
+  },
+  async removeAllSamples(adminUid, _nowMs) {
+    const snap = await db.collection('gigs').where('isSample', '==', true).limit(150).get();
+    const toRemove = snap.docs.filter((d) => d.data().status !== 'removed');
+    if (toRemove.length > 0) {
+      const batch = db.batch();
+      for (const d of toRemove) {
+        batch.update(d.ref, { status: 'removed', updatedAt: FieldValue.serverTimestamp() });
+      }
+      const auditRef = db.collection('auditLogs').doc();
+      batch.set(auditRef, {
+        actorUid: adminUid,
+        actorRole: 'admin',
+        action: 'removeAllSamples',
+        targetType: 'gig',
+        targetId: 'samples',
+        reason: 'Remove all sample listings',
+        metadata: { count: toRemove.length },
+        createdAt: FieldValue.serverTimestamp()
+      });
+      await batch.commit();
+    }
+    return toRemove.length;
   }
 };
 

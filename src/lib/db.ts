@@ -10,7 +10,6 @@ import {
   serverTimestamp,
   startAfter,
   where,
-  writeBatch,
   type DocumentData,
   type QueryDocumentSnapshot
 } from 'firebase/firestore';
@@ -391,45 +390,18 @@ export async function hasSamples(): Promise<boolean> {
   return snap.docs.some((d) => d.data().status !== 'removed');
 }
 
-const BATCH_LIMIT = 400;
-
 export async function seedSamples(): Promise<void> {
-  for (let i = 0; i < SAMPLE_GIGS.length; i += BATCH_LIMIT) {
-    const batch = writeBatch(db);
-    const slice = SAMPLE_GIGS.slice(i, i + BATCH_LIMIT);
-    for (const s of slice) {
-      const ref = doc(collection(db, 'gigs'));
-      batch.set(ref, {
-        title: s.title,
-        description: s.description,
-        category: s.category,
-        payMin: s.payMin,
-        payMax: s.payMax,
-        neighborhood: s.neighborhood,
-        posterUid: 'sample',
-        flags: 0,
-        status: 'active' as GigStatus,
-        verified: false,
-        isSample: true,
-        createdAt: serverTimestamp()
-      });
-    }
-    await batch.commit();
-  }
+  await callAdminManageMarketplace({
+    action: 'seedSamples',
+    samples: SAMPLE_GIGS
+  });
 }
 
 export async function removeAllSamples(): Promise<number> {
-  const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(ADMIN_QUEUE_LIMIT));
-  const snap = await getDocs(q);
-  const toRemove = snap.docs.filter((d) => d.data().status !== 'removed');
-  for (let i = 0; i < toRemove.length; i += BATCH_LIMIT) {
-    const batch = writeBatch(db);
-    for (const d of toRemove.slice(i, i + BATCH_LIMIT)) {
-      batch.update(doc(db, 'gigs', d.id), { status: 'removed' });
-    }
-    await batch.commit();
-  }
-  return toRemove.length;
+  const res = (await callAdminManageMarketplace({
+    action: 'removeAllSamples'
+  })) as { count?: number };
+  return typeof res.count === 'number' ? res.count : 0;
 }
 
 // ---------- Saved (localStorage, offline-first) ----------

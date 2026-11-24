@@ -27,7 +27,18 @@ export type AdminAction =
   | 'suspendEmployer'
   | 'reinstateEmployer'
   | 'setEmployerQuota'
-  | 'updateModerationSettings';
+  | 'updateModerationSettings'
+  | 'seedSamples'
+  | 'removeAllSamples';
+
+export interface SampleGigInput {
+  title: string;
+  description: string;
+  category: string;
+  payMin: number;
+  payMax: number;
+  neighborhood: string;
+}
 
 export interface AdminTxContext {
   getGig(gigId: string): Promise<StoredGig | null>;
@@ -48,6 +59,8 @@ export interface AdminTxContext {
 
 export interface AdminStore {
   runTransaction<T>(fn: (tx: AdminTxContext) => Promise<T>): Promise<T>;
+  seedSamples?(items: readonly SampleGigInput[], adminUid: string, nowMs: number): Promise<number>;
+  removeAllSamples?(adminUid: string, nowMs: number): Promise<number>;
 }
 
 export interface AdminCallRequest {
@@ -67,6 +80,7 @@ export interface AdminMutationResult {
   requirePreApproval?: boolean;
   remoderateMaterialEdits?: boolean;
   hiddenActiveCount?: number;
+  count?: number;
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -406,6 +420,53 @@ export async function handleAdminManageMarketplace(
       });
       return { ok: true, action, targetId: employerUid };
     });
+  }
+
+  if (action === 'seedSamples') {
+    if (!store.seedSamples) {
+      throw new ListingHandlerError('failed-precondition', 'Sample seeding not supported.');
+    }
+    const rawSamples = input.samples;
+    if (!Array.isArray(rawSamples) || rawSamples.length === 0 || rawSamples.length > 20) {
+      throw new ListingHandlerError('invalid-argument', 'Expected 1–20 sample listings.');
+    }
+    const validated: SampleGigInput[] = rawSamples.map((item) => {
+      if (!item || typeof item !== 'object') {
+        throw new ListingHandlerError('invalid-argument', 'Invalid sample listing entry.');
+      }
+      const s = item as Record<string, unknown>;
+      const title = typeof s.title === 'string' ? s.title.trim() : '';
+      const description = typeof s.description === 'string' ? s.description.trim() : '';
+      const category = typeof s.category === 'string' ? s.category.trim() : '';
+      const neighborhood = typeof s.neighborhood === 'string' ? s.neighborhood.trim() : '';
+      const payMin = typeof s.payMin === 'number' ? s.payMin : NaN;
+      const payMax = typeof s.payMax === 'number' ? s.payMax : NaN;
+      if (
+        title.length < 3 ||
+        title.length > 120 ||
+        description.length < 3 ||
+        description.length > 2000 ||
+        !category ||
+        !neighborhood ||
+        !Number.isFinite(payMin) ||
+        !Number.isFinite(payMax) ||
+        payMin < 0 ||
+        payMax < payMin
+      ) {
+        throw new ListingHandlerError('invalid-argument', 'Invalid sample listing fields.');
+      }
+      return { title, description, category, payMin, payMax, neighborhood };
+    });
+    const count = await store.seedSamples(validated, adminUid, nowMs);
+    return { ok: true, action, targetId: 'samples', count };
+  }
+
+  if (action === 'removeAllSamples') {
+    if (!store.removeAllSamples) {
+      throw new ListingHandlerError('failed-precondition', 'Sample removal not supported.');
+    }
+    const count = await store.removeAllSamples(adminUid, nowMs);
+    return { ok: true, action, targetId: 'samples', count };
   }
 
   throw new ListingHandlerError('invalid-argument', 'Unknown admin action.');
