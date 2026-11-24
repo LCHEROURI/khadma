@@ -679,4 +679,70 @@ describe('KHADMA Firestore Security Rules', () => {
     await assertFails(setDoc(doc(adminDb, 'settings', 'marketplace'), { requirePreApproval: false }));
     await assertFails(deleteDoc(doc(adminDb, 'settings', 'marketplace')));
   });
+
+  it('V1.4 Phase 4 Final Cutover Rules: denies ALL direct client writes to gigs, gigContacts, employers, settings, auditLogs, and listingIdempotency', async () => {
+    const cutoverRules = fs.readFileSync(
+      path.resolve(process.cwd(), 'firestore.rules.v14-cutover'),
+      'utf8'
+    );
+    const cutoverEnv = await initializeTestEnvironment({
+      projectId: `${PROJECT_ID}-cutover`,
+      firestore: {
+        rules: cutoverRules,
+        host: '127.0.0.1',
+        port: 8080
+      }
+    });
+
+    try {
+      const futureExpiry = Timestamp.fromMillis(Date.now() + 10 * 24 * 60 * 60 * 1000);
+      const pastExpiry = Timestamp.fromMillis(Date.now() - 60_000);
+
+      await cutoverEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, 'gigs', 'g_live'), { ...makeGigPayload('u_emp'), expiresAt: futureExpiry });
+        await setDoc(doc(db, 'gigs', 'g_exp'), { ...makeGigPayload('u_emp'), expiresAt: pastExpiry });
+        await setDoc(doc(db, 'employers', 'u_emp'), { uid: 'u_emp', maxActiveGigs: 3, activeCount: 1 });
+        await setDoc(doc(db, 'settings', 'marketplace'), { requirePreApproval: false });
+      });
+
+      const unauthDb = cutoverEnv.unauthenticatedContext().firestore();
+      const phoneDb = cutoverEnv.authenticatedContext('u_phone', { phone_number: PHONE }).firestore();
+      const emailDb = cutoverEnv
+        .authenticatedContext('u_emp', { email: 'emp@oran.dz', email_verified: true })
+        .firestore();
+      const adminDb = cutoverEnv
+        .authenticatedContext('admin-1', { email: ADMIN_EMAIL, email_verified: true })
+        .firestore();
+
+      // Public reads: unexpired active allowed, expired get denied
+      await assertSucceeds(getDoc(doc(unauthDb, 'gigs', 'g_live')));
+      await assertFails(getDoc(doc(unauthDb, 'gigs', 'g_exp')));
+
+      // Owner & admin reads still work
+      await assertSucceeds(getDoc(doc(emailDb, 'gigs', 'g_exp')));
+      await assertSucceeds(getDoc(doc(emailDb, 'employers', 'u_emp')));
+      await assertSucceeds(getDoc(doc(adminDb, 'settings', 'marketplace')));
+
+      // ALL direct client creates/updates/deletes MUST be denied (including phone users & admin!)
+      await assertFails(setDoc(doc(phoneDb, 'gigs', 'g_bypass'), makeGigPayload('u_phone')));
+      await assertFails(setDoc(doc(emailDb, 'gigs', 'g_bypass2'), makeGigPayload('u_emp')));
+      await assertFails(updateDoc(doc(adminDb, 'gigs', 'g_live'), { status: 'removed' }));
+      await assertFails(deleteDoc(doc(adminDb, 'gigs', 'g_live')));
+      await assertFails(
+        setDoc(doc(phoneDb, 'gigContacts', 'g_bypass'), {
+          posterPhone: PHONE,
+          counterId: PHONE,
+          posterUid: 'u_phone',
+          createdAt: serverTimestamp()
+        })
+      );
+      await assertFails(updateDoc(doc(emailDb, 'employers', 'u_emp'), { maxActiveGigs: 99 }));
+      await assertFails(updateDoc(doc(adminDb, 'settings', 'marketplace'), { requirePreApproval: true }));
+      await assertFails(getDoc(doc(adminDb, 'listingIdempotency', 'k1')));
+      await assertFails(setDoc(doc(emailDb, 'listingIdempotency', 'k1'), { gigId: 'g_live' }));
+    } finally {
+      await cutoverEnv.cleanup();
+    }
+  });
 });

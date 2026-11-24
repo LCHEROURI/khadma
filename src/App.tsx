@@ -50,6 +50,7 @@ export default function App() {
                   <Route path="/employer" element={<Employer />} />
                   <Route path="/employer/auth" element={<EmployerAuth />} />
                   <Route path="/employer/post" element={<PostGig lockedType="job" />} />
+                  <Route path="/employer/edit/:id" element={<PostGig />} />
                   <Route path="/services/post" element={<PostGig lockedType="service" />} />
                   <Route path="/gig/:id" element={<GigDetail />} />
                   <Route path="/post" element={<PostGig defaultType="job" />} />

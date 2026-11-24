@@ -17,7 +17,16 @@ import {
 import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../firebase';
-import type { ContactMethod, EmployerProfile, Gig, GigStatus, ListingType, ReportReason } from './types';
+import type {
+  AuditLogEntry,
+  ContactMethod,
+  EmployerProfile,
+  Gig,
+  GigStatus,
+  ListingType,
+  MarketplaceModerationSettings,
+  ReportReason
+} from './types';
 import { isSafeContactUrl } from './contactLink';
 import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
 import { SAMPLE_GIGS } from './samples';
@@ -147,6 +156,76 @@ export async function getEmployerProfile(uid: string): Promise<EmployerProfile |
   const snap = await getDoc(doc(db, 'employers', uid));
   if (!snap.exists()) return null;
   return { uid: snap.id, ...snap.data() } as EmployerProfile;
+}
+
+export interface ManageListingResult {
+  gigId: string;
+  status: GigStatus;
+  expiresAtMs: number | null;
+  quotaUsed: number;
+  quotaMax: number;
+  idempotentReplay?: boolean;
+}
+
+export async function callManageEmployerListing(
+  payload: Record<string, unknown>
+): Promise<ManageListingResult> {
+  const call = httpsCallable<Record<string, unknown>, ManageListingResult>(
+    functions,
+    'manageEmployerListing'
+  );
+  const res = await call(payload);
+  return res.data;
+}
+
+export interface AdminMutationResponse {
+  ok: true;
+  action: string;
+  targetId: string;
+  status?: GigStatus;
+  requirePreApproval?: boolean;
+  remoderateMaterialEdits?: boolean;
+  hiddenActiveCount?: number;
+}
+
+export async function callAdminManageMarketplace(
+  payload: Record<string, unknown>
+): Promise<AdminMutationResponse> {
+  const call = httpsCallable<Record<string, unknown>, AdminMutationResponse>(
+    functions,
+    'adminManageMarketplace'
+  );
+  const res = await call(payload);
+  return res.data;
+}
+
+export async function getMarketplaceModerationSettings(): Promise<MarketplaceModerationSettings | null> {
+  const snap = await getDoc(doc(db, 'settings', 'marketplace'));
+  if (!snap.exists()) return null;
+  return snap.data() as MarketplaceModerationSettings;
+}
+
+export async function getAdminPendingGigs(): Promise<Gig[]> {
+  const q = query(
+    collection(db, 'gigs'),
+    where('status', '==', 'pending'),
+    orderBy('createdAt', 'desc'),
+    limit(ADMIN_QUEUE_LIMIT)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+}
+
+export async function getAdminEmployers(): Promise<EmployerProfile[]> {
+  const q = query(collection(db, 'employers'), limit(50));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() }) as EmployerProfile);
+}
+
+export async function getAdminAuditLogs(): Promise<AuditLogEntry[]> {
+  const q = query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(50));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLogEntry);
 }
 
 // ---------- Contact (Account-Free + App Check + Server-Side IP/Listing Rate Limit) ----------

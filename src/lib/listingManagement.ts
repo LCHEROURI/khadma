@@ -1,3 +1,4 @@
+import { LISTING_RENEWAL_WINDOW_MS } from './constants';
 import type { Gig, GigStatus } from './types';
 
 export type OwnedStatusFilter = 'all' | GigStatus;
@@ -5,6 +6,9 @@ export type OwnedStatusFilter = 'all' | GigStatus;
 export interface OwnedListingsSummary {
   total: number;
   active: number;
+  pending: number;
+  expired: number;
+  archived: number;
   hidden: number;
   removed: number;
 }
@@ -18,16 +22,43 @@ const STATUS_ORDER: Record<GigStatus, number> = {
   removed: 5
 };
 
-export function summarizeOwnedListings(gigs: readonly Gig[]): OwnedListingsSummary {
-  let active = 0;
-  let hidden = 0;
-  let removed = 0;
-  for (const g of gigs) {
-    if (g.status === 'active') active += 1;
-    else if (g.status === 'hidden') hidden += 1;
-    else if (g.status === 'removed') removed += 1;
+export function getGigExpiresAtMs(gig: Pick<Gig, 'expiresAt'>): number | null {
+  if (!gig.expiresAt || typeof gig.expiresAt.seconds !== 'number') return null;
+  return gig.expiresAt.seconds * 1000;
+}
+
+export function isEligibleForRenewal(gig: Pick<Gig, 'status' | 'expiresAt'>, nowMs = Date.now()): boolean {
+  if (gig.status !== 'active') return false;
+  const expMs = getGigExpiresAtMs(gig);
+  if (expMs === null) return false;
+  return nowMs >= expMs - LISTING_RENEWAL_WINDOW_MS && nowMs < expMs;
+}
+
+export function canRepublishGig(gig: Pick<Gig, 'status' | 'expiresAt'>, nowMs = Date.now()): boolean {
+  if (gig.status === 'expired' || gig.status === 'archived') return true;
+  if (gig.status === 'active') {
+    const expMs = getGigExpiresAtMs(gig);
+    return expMs !== null && nowMs >= expMs;
   }
-  return { total: gigs.length, active, hidden, removed };
+  return false;
+}
+
+export function summarizeOwnedListings(gigs: readonly Gig[]): OwnedListingsSummary {
+  const counts: OwnedListingsSummary = {
+    total: gigs.length,
+    active: 0,
+    pending: 0,
+    expired: 0,
+    archived: 0,
+    hidden: 0,
+    removed: 0
+  };
+  for (const g of gigs) {
+    if (g.status in counts) {
+      counts[g.status] += 1;
+    }
+  }
+  return counts;
 }
 
 export function sortOwnedListings(gigs: readonly Gig[]): Gig[] {

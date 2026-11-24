@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import {
   ContactHandlerError,
   evaluateListingBurstBucket,
@@ -20,9 +21,57 @@ import {
   ReportHandlerError,
   type ReportStore
 } from './reportHandler.js';
+import {
+  handleManageEmployerListing,
+  ListingHandlerError,
+  type AuditRecordInput,
+  type IdempotencyRecord,
+  type ListingStore,
+  type StoredEmployerProfile,
+  type StoredGig,
+  type StoredModerationSettings
+} from './listingHandler.js';
+import { handleAdminManageMarketplace, type AdminStore } from './adminHandler.js';
+import { runExpireStaleGigs, type ExpirationStore } from './expirationHandler.js';
+import {
+  AUDIT_LOGS_COLLECTION,
+  EMPLOYERS_COLLECTION,
+  MARKETPLACE_SETTINGS_DOC_ID,
+  SETTINGS_COLLECTION
+} from './types.js';
 
 initializeApp();
 const db = getFirestore();
+
+const IDEMPOTENCY_COLLECTION = 'listingIdempotency';
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+function toFirestoreTimestamps(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...obj };
+  for (const key of ['createdAt', 'updatedAt', 'expiresAt']) {
+    if (typeof out[key] === 'number') {
+      out[key] = Timestamp.fromMillis(out[key] as number);
+    }
+  }
+  return out;
+}
+
+function writeSanitizedAudit(
+  tx: FirebaseFirestore.Transaction,
+  entry: AuditRecordInput
+): void {
+  const ref = db.collection(AUDIT_LOGS_COLLECTION).doc();
+  tx.set(ref, {
+    actorUid: entry.actorUid,
+    actorRole: entry.actorRole,
+    action: entry.action,
+    targetType: entry.targetType,
+    targetId: entry.targetId,
+    ...(entry.reason ? { reason: entry.reason } : {}),
+    ...(entry.metadata ? { metadata: entry.metadata } : {}),
+    createdAt: Timestamp.fromMillis(entry.nowMs)
+  });
+}
 
 const firestoreStore: ContactStore = {
   async getGig(gigId: string) {
@@ -124,10 +173,6 @@ export const CONTACT_FUNCTION_OPTIONS = {
   timeoutSeconds: 15
 } as const;
 
-/**
- * Account-free, App-Check-protected, IP + listing rate-limited WhatsApp & email contact handoff.
- * Backward-compatible with V1.3 clients (channel defaults to 'whatsapp', response includes waUrl).
- */
 export const getGigContactLink = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
   const clientIp = extractTrustedClientIp(request.rawRequest);
   const data = (request.data ?? {}) as { gigId?: unknown; channel?: unknown; lang?: unknown };
@@ -215,9 +260,6 @@ const firestoreReportStore: ReportStore = {
   }
 };
 
-/**
- * Authenticated, App-Check-protected, IP-Sybil-resistant gig reporting endpoint (SEC-002).
- */
 export const reportGigListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
   const clientIp = extractTrustedClientIp(request.rawRequest);
 
@@ -236,3 +278,238 @@ export const reportGigListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request)
     throw new HttpsError('internal', 'Internal Server Error');
   }
 });
+
+// ---------- Phase 4: Employer Listing Lifecycle ----------
+
+const firestoreListingStore: ListingStore = {
+  runTransaction(fn) {
+    return db.runTransaction(async (tx) => {
+      return fn({
+        async getEmployer(uid) {
+          const snap = await tx.get(db.collection(EMPLOYERS_COLLECTION).doc(uid));
+          return snap.exists ? ({ uid: snap.id, ...snap.data() } as StoredEmployerProfile) : null;
+        },
+        setEmployer(uid, data) {
+          tx.set(
+            db.collection(EMPLOYERS_COLLECTION).doc(uid),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        async getModerationSettings() {
+          const snap = await tx.get(
+            db.collection(SETTINGS_COLLECTION).doc(MARKETPLACE_SETTINGS_DOC_ID)
+          );
+          return snap.exists ? (snap.data() as StoredModerationSettings) : null;
+        },
+        async getGig(gigId) {
+          const snap = await tx.get(db.collection('gigs').doc(gigId));
+          return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
+        },
+        async listEmployerGigs(uid) {
+          const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+          const snap = await tx.get(q);
+          return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
+        },
+        createGig(data) {
+          const ref = db.collection('gigs').doc();
+          tx.set(ref, toFirestoreTimestamps(data as unknown as Record<string, unknown>));
+          return ref.id;
+        },
+        updateGig(gigId, patch) {
+          tx.update(
+            db.collection('gigs').doc(gigId),
+            toFirestoreTimestamps(patch as unknown as Record<string, unknown>)
+          );
+        },
+        setGigContact(gigId, data) {
+          tx.set(
+            db.collection('gigContacts').doc(gigId),
+            {
+              posterUid: data.posterUid,
+              contactPhone: data.contactPhone,
+              contactEmail: data.contactEmail,
+              whatsappConsent: data.whatsappConsent,
+              emailConsent: data.emailConsent,
+              updatedAt: Timestamp.fromMillis(data.updatedAtMs),
+              ...(data.createdAtMs ? { createdAt: Timestamp.fromMillis(data.createdAtMs) } : {})
+            },
+            { merge: true }
+          );
+        },
+        async getIdempotency(key) {
+          const snap = await tx.get(db.collection(IDEMPOTENCY_COLLECTION).doc(key));
+          return snap.exists ? (snap.data() as IdempotencyRecord) : null;
+        },
+        setIdempotency(key, record, nowMs) {
+          tx.set(db.collection(IDEMPOTENCY_COLLECTION).doc(key), {
+            ...record,
+            expireAt: Timestamp.fromMillis(nowMs + IDEMPOTENCY_TTL_MS)
+          });
+        },
+        writeAuditLog(entry) {
+          writeSanitizedAudit(tx, entry);
+        }
+      });
+    });
+  }
+};
+
+export const manageEmployerListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
+  try {
+    return await handleManageEmployerListing(firestoreListingStore, {
+      authUid: request.auth?.uid ?? null,
+      authEmail: typeof request.auth?.token?.email === 'string' ? request.auth.token.email : null,
+      authEmailVerified: request.auth?.token?.email_verified === true,
+      authPhone:
+        typeof request.auth?.token?.phone_number === 'string'
+          ? request.auth.token.phone_number
+          : null,
+      hasAppCheck: Boolean(request.app),
+      payload: request.data
+    });
+  } catch (err) {
+    if (err instanceof ListingHandlerError) {
+      throw new HttpsError(err.code, err.message);
+    }
+    throw new HttpsError('internal', 'Internal Server Error');
+  }
+});
+
+// ---------- Phase 4: Administrator Moderation & Quotas ----------
+
+const firestoreAdminStore: AdminStore = {
+  runTransaction(fn) {
+    return db.runTransaction(async (tx) => {
+      return fn({
+        async getGig(gigId) {
+          const snap = await tx.get(db.collection('gigs').doc(gigId));
+          return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
+        },
+        updateGig(gigId, patch) {
+          tx.update(
+            db.collection('gigs').doc(gigId),
+            toFirestoreTimestamps(patch as unknown as Record<string, unknown>)
+          );
+        },
+        async getEmployer(uid) {
+          const snap = await tx.get(db.collection(EMPLOYERS_COLLECTION).doc(uid));
+          return snap.exists ? ({ uid: snap.id, ...snap.data() } as StoredEmployerProfile) : null;
+        },
+        setEmployer(uid, data) {
+          tx.set(
+            db.collection(EMPLOYERS_COLLECTION).doc(uid),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        async listEmployerGigs(uid) {
+          const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+          const snap = await tx.get(q);
+          return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
+        },
+        async getModerationSettings() {
+          const snap = await tx.get(
+            db.collection(SETTINGS_COLLECTION).doc(MARKETPLACE_SETTINGS_DOC_ID)
+          );
+          return snap.exists ? (snap.data() as StoredModerationSettings) : null;
+        },
+        setModerationSettings(data) {
+          tx.set(
+            db.collection(SETTINGS_COLLECTION).doc(MARKETPLACE_SETTINGS_DOC_ID),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        writeAuditLog(entry) {
+          writeSanitizedAudit(tx, entry);
+        }
+      });
+    });
+  }
+};
+
+export const adminManageMarketplace = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
+  try {
+    return await handleAdminManageMarketplace(firestoreAdminStore, {
+      authUid: request.auth?.uid ?? null,
+      authEmail: typeof request.auth?.token?.email === 'string' ? request.auth.token.email : null,
+      authEmailVerified: request.auth?.token?.email_verified === true,
+      hasAppCheck: Boolean(request.app),
+      payload: request.data
+    });
+  } catch (err) {
+    if (err instanceof ListingHandlerError) {
+      throw new HttpsError(err.code, err.message);
+    }
+    throw new HttpsError('internal', 'Internal Server Error');
+  }
+});
+
+// ---------- Phase 4: Scheduled Expiration Sweep (Every 6 Hours) ----------
+
+const firestoreExpirationStore: ExpirationStore = {
+  async findStaleActiveGigIds(nowMs, batchSize, afterId) {
+    let q = db
+      .collection('gigs')
+      .where('status', '==', 'active')
+      .where('expiresAt', '<=', Timestamp.fromMillis(nowMs))
+      .orderBy('expiresAt', 'asc')
+      .limit(batchSize);
+    if (afterId) {
+      const cursorSnap = await db.collection('gigs').doc(afterId).get();
+      if (cursorSnap.exists) {
+        q = q.startAfter(cursorSnap);
+      }
+    }
+    const snap = await q.get();
+    return snap.docs.map((d) => d.id);
+  },
+  runTransaction(fn) {
+    return db.runTransaction(async (tx) => {
+      return fn({
+        async getGig(gigId) {
+          const snap = await tx.get(db.collection('gigs').doc(gigId));
+          return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
+        },
+        updateGig(gigId, patch) {
+          tx.update(
+            db.collection('gigs').doc(gigId),
+            toFirestoreTimestamps(patch as unknown as Record<string, unknown>)
+          );
+        },
+        async getEmployer(uid) {
+          const snap = await tx.get(db.collection(EMPLOYERS_COLLECTION).doc(uid));
+          return snap.exists ? ({ uid: snap.id, ...snap.data() } as StoredEmployerProfile) : null;
+        },
+        setEmployer(uid, data) {
+          tx.set(
+            db.collection(EMPLOYERS_COLLECTION).doc(uid),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        async listEmployerGigs(uid) {
+          const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+          const snap = await tx.get(q);
+          return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
+        },
+        writeAuditLog(entry) {
+          writeSanitizedAudit(tx, entry);
+        }
+      });
+    });
+  }
+};
+
+export const expireStaleGigs = onSchedule(
+  {
+    schedule: 'every 6 hours',
+    region: 'europe-west1',
+    maxInstances: 1,
+    timeoutSeconds: 120
+  },
+  async () => {
+    await runExpireStaleGigs(firestoreExpirationStore);
+  }
+);

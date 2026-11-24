@@ -4,7 +4,12 @@ import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
 import { MAX_ACTIVE_GIGS } from '../lib/constants';
-import { getEmployerProfile, getMyGigs, getRemainingForPhone } from '../lib/db';
+import {
+  callManageEmployerListing,
+  getEmployerProfile,
+  getMyGigs,
+  getRemainingForPhone
+} from '../lib/db';
 import {
   isValidEmail,
   linkEmailToLegacyPhoneAccount,
@@ -15,7 +20,9 @@ import {
 } from '../lib/employerAuth';
 import { formatNeighborhood, formatPay, timeAgo } from '../lib/format';
 import {
+  canRepublishGig,
   filterOwnedListings,
+  isEligibleForRenewal,
   summarizeOwnedListings,
   type OwnedStatusFilter
 } from '../lib/listingManagement';
@@ -41,6 +48,7 @@ export function Employer() {
   const [legacyRemaining, setLegacyRemaining] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<OwnedStatusFilter>('all');
   const [reloadTick, setReloadTick] = useState(0);
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [err, setErr] = useState('');
 
   // In-app legacy phone -> email linking state
@@ -108,14 +116,36 @@ export function Employer() {
       ? profile.activeCount
       : phoneNumber && legacyRemaining !== null
         ? Math.max(0, MAX_ACTIVE_GIGS - legacyRemaining)
-        : summary.active;
+        : summary.active + summary.pending;
 
   const statusTabs: { id: OwnedStatusFilter; label: string; count: number }[] = [
     { id: 'all', label: t('employer.statusAll'), count: summary.total },
     { id: 'active', label: t('employer.statusActive'), count: summary.active },
+    { id: 'pending', label: t('employer.statusPending'), count: summary.pending },
+    { id: 'expired', label: t('employer.statusExpired'), count: summary.expired },
+    { id: 'archived', label: t('employer.statusArchived'), count: summary.archived },
     { id: 'hidden', label: t('employer.statusHidden'), count: summary.hidden },
     { id: 'removed', label: t('employer.statusRemoved'), count: summary.removed }
   ];
+
+  const runListingAction = async (
+    gigId: string,
+    action: 'archive' | 'renew' | 'republish'
+  ) => {
+    if (actionBusyId) return;
+    setActionBusyId(gigId);
+    setErr('');
+    try {
+      await callManageEmployerListing({ action, gigId });
+      setReloadTick((n) => n + 1);
+    } catch (e) {
+      const code = (e as { code?: string }).code ?? '';
+      if (code === 'functions/resource-exhausted') setErr(t('post.rateLimit'));
+      else setErr(t('common.error'));
+    } finally {
+      setActionBusyId(null);
+    }
+  };
 
   const handleLinkEmail = async () => {
     if (!user) return;
@@ -297,18 +327,13 @@ export function Employer() {
               </div>
             )}
 
-            {err ? (
-              <div className="empty">
-                <p className="form-error">{err}</p>
-                <button
-                  type="button"
-                  className="btn btn-soft-green"
-                  onClick={() => setReloadTick((n) => n + 1)}
-                >
-                  {t('common.retry')}
-                </button>
-              </div>
-            ) : visibleGigs === null ? (
+            {err && (
+              <p className="form-error" role="alert">
+                {err}
+              </p>
+            )}
+
+            {visibleGigs === null ? (
               <p className="muted center">{t('common.loading')}</p>
             ) : gigs && gigs.length === 0 ? (
               <div className="empty">
@@ -327,33 +352,86 @@ export function Employer() {
                 </button>
               </div>
             ) : (
-              <>
-                <div className="card-list">
-                  {visibleGigs.map((g) => (
-                    <Link key={g.id} to={`/gig/${g.id}`} className="card">
-                      <div className="card-chips">
-                        <span className={`chip chip-type-${g.listingType ?? 'legacy'}`}>
-                          {t(`listingType.${g.listingType ?? 'legacy'}`)}
-                        </span>
-                        <span className="chip">{t(`categories.${g.category}`)}</span>
-                        <span className="chip chip-neigh">{formatNeighborhood(g.neighborhood, t)}</span>
-                        <span className={`status-chip status-badge-${g.status}`}>
-                          {t(`admin.status.${g.status}`)}
-                        </span>
-                        {g.flags > 0 && (
-                          <span className="flag-chip">🚩 {t('admin.flags', { n: g.flags })}</span>
-                        )}
-                      </div>
-                      <h3 className="card-title">{g.title}</h3>
-                      <div className="card-pay">{formatPay(g.payMin, g.payMax, t('common.currency'))}</div>
-                      <div className="card-meta">
-                        <span className="meta-item">{timeAgo(g, t)}</span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-                <p className="muted small employer-note">{t('employer.moderationNote')}</p>
-              </>
+              <div className="card-list">
+                {visibleGigs.map((g) => {
+                  const canEdit = g.status === 'active' || g.status === 'pending';
+                  const canArchive = g.status === 'active' || g.status === 'pending';
+                  const canRenew = isEligibleForRenewal(g);
+                  const canRepublish = canRepublishGig(g);
+                  const isModeratedLocked = g.status === 'hidden' || g.status === 'removed';
+                  const rowBusy = actionBusyId === g.id;
+
+                  return (
+                    <div key={g.id} className="card employer-card">
+                      <Link to={`/gig/${g.id}`} className="employer-card-link">
+                        <div className="card-chips">
+                          <span className={`chip chip-type-${g.listingType ?? 'legacy'}`}>
+                            {t(`listingType.${g.listingType ?? 'legacy'}`)}
+                          </span>
+                          <span className="chip">{t(`categories.${g.category}`)}</span>
+                          <span className="chip chip-neigh">{formatNeighborhood(g.neighborhood, t)}</span>
+                          <span className={`status-chip status-badge-${g.status}`}>
+                            {t(`admin.status.${g.status}`)}
+                          </span>
+                          {g.flags > 0 && (
+                            <span className="flag-chip">🚩 {t('admin.flags', { n: g.flags })}</span>
+                          )}
+                        </div>
+                        <h3 className="card-title">{g.title}</h3>
+                        <div className="card-pay">{formatPay(g.payMin, g.payMax, t('common.currency'))}</div>
+                        <div className="card-meta">
+                          <span className="meta-item">{timeAgo(g, t)}</span>
+                        </div>
+                      </Link>
+
+                      {!eligibility.isSuspended && (
+                        <div className="employer-card-actions">
+                          {canEdit && (
+                            <Link to={`/employer/edit/${g.id}`} className="btn btn-ghost btn-small">
+                              {t('employer.actionEdit')}
+                            </Link>
+                          )}
+                          {canRenew && (
+                            <button
+                              type="button"
+                              className="btn btn-soft-green btn-small"
+                              disabled={rowBusy}
+                              onClick={() => void runListingAction(g.id, 'renew')}
+                            >
+                              {t('employer.actionRenew')}
+                            </button>
+                          )}
+                          {canArchive && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-small"
+                              disabled={rowBusy}
+                              onClick={() => void runListingAction(g.id, 'archive')}
+                            >
+                              {t('employer.actionArchive')}
+                            </button>
+                          )}
+                          {canRepublish && (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-small"
+                              disabled={rowBusy}
+                              onClick={() => void runListingAction(g.id, 'republish')}
+                            >
+                              {t('employer.actionRepublish')}
+                            </button>
+                          )}
+                          {isModeratedLocked && (
+                            <span className="muted small">
+                              {g.moderationReason || t('employer.moderatedLockedHint')}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </>
         )}
