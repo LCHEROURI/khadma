@@ -13,7 +13,7 @@ import {
 } from '../lib/constants';
 import { callManageEmployerListing, getEmployerProfile, getGig } from '../lib/db';
 import { isValidEmail, resolveEmployerEligibility, signOutEmployer } from '../lib/employerAuth';
-import { formatNeighborhood } from '../lib/format';
+import { extractQuotaMaxFromError, formatNeighborhood } from '../lib/format';
 import { normalizeDzPhone } from '../lib/phone';
 import type { Category, ContactMethod, EmployerProfile, ListingType } from '../lib/types';
 import { Banner } from '../components/Banner';
@@ -228,8 +228,12 @@ export function PostGig({
       }
     } catch (e) {
       const code = (e as { code?: string }).code ?? '';
-      if (code === 'functions/resource-exhausted') setErr(t('post.rateLimit'));
-      else setErr(t('post.error'));
+      if (code === 'functions/resource-exhausted') {
+        const max = extractQuotaMaxFromError(e, eligibility.quotaMax);
+        setErr(t('post.rateLimit', { max }));
+      } else {
+        setErr(t('post.error'));
+      }
       setBusy(false);
     }
   };

@@ -119,3 +119,11 @@ export interface Report {
   reporterId: string;
   createdAt: unknown;
 }
+
+export interface AdminReportItem {
+  id: string;
+  gigId: string;
+  reason: ReportReason;
+  createdAt: FirestoreTimestampLike | null;
+  gig: Gig | null;
+}

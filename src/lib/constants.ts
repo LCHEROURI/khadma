@@ -61,3 +61,4 @@ export const HIDE_AFTER_REPORTS = 3;
 export const ADMIN_EMAIL = 'cherouri@gmail.com';
 export const BROWSE_PAGE_SIZE = 50;
 export const ADMIN_QUEUE_LIMIT = 150;
+export const ADMIN_REPORTS_PAGE_SIZE = 25;

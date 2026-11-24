@@ -18,7 +18,7 @@ import {
   signOutEmployer,
   validatePassword
 } from '../lib/employerAuth';
-import { formatNeighborhood, formatPay, timeAgo } from '../lib/format';
+import { extractQuotaMaxFromError, formatNeighborhood, formatPay, timeAgo } from '../lib/format';
 import {
   canRepublishGig,
   filterOwnedListings,
@@ -150,8 +150,12 @@ export function Employer() {
       setReloadTick((n) => n + 1);
     } catch (e) {
       const code = (e as { code?: string }).code ?? '';
-      if (code === 'functions/resource-exhausted') setErr(t('post.rateLimit'));
-      else setErr(t('common.error'));
+      if (code === 'functions/resource-exhausted') {
+        const max = extractQuotaMaxFromError(e, eligibility.quotaMax);
+        setErr(t('post.rateLimit', { max }));
+      } else {
+        setErr(t('common.error'));
+      }
     } finally {
       setActionBusyId(null);
     }

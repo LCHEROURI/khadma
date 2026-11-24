@@ -406,7 +406,7 @@ export const manageEmployerListing = onCall(CONTACT_FUNCTION_OPTIONS, async (req
     });
   } catch (err) {
     if (err instanceof ListingHandlerError) {
-      throw new HttpsError(err.code, err.message);
+      throw new HttpsError(err.code, err.message, err.details);
     }
     throw new HttpsError('internal', 'Internal Server Error');
   }
@@ -542,7 +542,7 @@ export const adminManageMarketplace = onCall(CONTACT_FUNCTION_OPTIONS, async (re
     });
   } catch (err) {
     if (err instanceof ListingHandlerError) {
-      throw new HttpsError(err.code, err.message);
+      throw new HttpsError(err.code, err.message, err.details);
     }
     throw new HttpsError('internal', 'Internal Server Error');
   }

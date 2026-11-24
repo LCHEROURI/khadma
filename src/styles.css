@@ -403,6 +403,11 @@ textarea {
   font-weight: 800;
   color: var(--brand-dark);
   margin-bottom: var(--s-2);
+  unicode-bidi: isolate;
+}
+
+.pay-value {
+  unicode-bidi: isolate;
 }
 
 .card-meta {
@@ -610,6 +615,7 @@ textarea {
   font-weight: 800;
   color: var(--brand-dark);
   margin-bottom: var(--s-4);
+  unicode-bidi: isolate;
 }
 
 .detail-desc {

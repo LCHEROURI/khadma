@@ -46,10 +46,37 @@ export function formatListingCount(
   }
 }
 
+const LRI = '\u2066';
+const PDI = '\u2069';
+
 export function formatPay(min: number, max: number, currency = 'DZD'): string {
   const lo = nf.format(min);
-  if (min === max) return `${lo} ${currency}`;
-  return `${lo}–${nf.format(max)} ${currency}`;
+  if (min === max) return `${LRI}${lo}${PDI} ${currency}`;
+  return `${LRI}${lo}–${nf.format(max)}${PDI} ${currency}`;
+}
+
+/**
+ * Extracts the authoritative employer quota limit from a Firebase Functions
+ * `resource-exhausted` error (structured `details.quotaMax` or message fallback),
+ * falling back to the client-side `fallbackMax`.
+ */
+export function extractQuotaMaxFromError(err: unknown, fallbackMax: number): number {
+  if (err && typeof err === 'object') {
+    const details = (err as { details?: unknown }).details;
+    if (details && typeof details === 'object' && 'quotaMax' in details) {
+      const n = Number((details as { quotaMax?: unknown }).quotaMax);
+      if (Number.isInteger(n) && n >= 0) return n;
+    }
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === 'string') {
+      const m = msg.match(/\((\d+)\)/);
+      if (m) {
+        const parsed = parseInt(m[1], 10);
+        if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+      }
+    }
+  }
+  return fallbackMax;
 }
 
 export function formatNeighborhood(
