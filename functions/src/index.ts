@@ -22,6 +22,7 @@ import {
   type ReportStore
 } from './reportHandler.js';
 import {
+  EMPLOYER_ACTIVE_QUERY_LIMIT,
   handleManageEmployerListing,
   ListingHandlerError,
   type AuditRecordInput,
@@ -45,6 +46,37 @@ const db = getFirestore();
 
 const IDEMPOTENCY_COLLECTION = 'listingIdempotency';
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+// N+1 sentinel probe: fetch 51 docs so >50 active/pending ads triggers overflow protection instead of silent truncation
+const EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT = EMPLOYER_ACTIVE_QUERY_LIMIT + 1;
+
+/**
+ * Pure predicate verifying that the runtime is strictly an isolated local `demo-*`
+ * Firebase Functions Emulator (and NEVER deployed Cloud Run / Cloud Functions v2 where K_SERVICE is set).
+ * No client-controlled header or payload can influence this check.
+ */
+export function isDemoEmulatorEnv(env: Record<string, string | undefined> = process.env): boolean {
+  return (
+    env.FUNCTIONS_EMULATOR === 'true' &&
+    typeof env.GCLOUD_PROJECT === 'string' &&
+    env.GCLOUD_PROJECT.startsWith('demo-') &&
+    Boolean(env.FIRESTORE_EMULATOR_HOST)
+  );
+}
+
+const IS_DEMO_EMULATOR = isDemoEmulatorEnv(process.env);
+
+/**
+ * Evaluates App Check attestation for callable requests.
+ * Production always requires a verified `request.app` (in addition to `enforceAppCheck: true`).
+ * Strictly scoped accommodation ONLY for isolated local `demo-*` Firebase Functions Emulator runs.
+ */
+export function resolveHasAppCheck(
+  request: { app?: unknown },
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  if (request.app) return true;
+  return isDemoEmulatorEnv(env);
+}
 
 function toFirestoreTimestamps(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...obj };
@@ -168,7 +200,7 @@ const firestoreStore: ContactStore = {
 
 export const CONTACT_FUNCTION_OPTIONS = {
   region: 'europe-west1',
-  enforceAppCheck: true,
+  enforceAppCheck: !IS_DEMO_EMULATOR,
   maxInstances: 20,
   timeoutSeconds: 15
 } as const;
@@ -180,7 +212,7 @@ export const getGigContactLink = onCall(CONTACT_FUNCTION_OPTIONS, async (request
   try {
     return await handleGetGigContactLink(firestoreStore, {
       authUid: request.auth?.uid ?? null,
-      hasAppCheck: Boolean(request.app),
+      hasAppCheck: resolveHasAppCheck(request),
       clientIp,
       gigId: data.gigId,
       channel: data.channel,
@@ -266,7 +298,7 @@ export const reportGigListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request)
   try {
     return await handleReportGigListing(firestoreReportStore, {
       authUid: request.auth?.uid ?? null,
-      hasAppCheck: Boolean(request.app),
+      hasAppCheck: resolveHasAppCheck(request),
       clientIp,
       gigId: (request.data as { gigId?: unknown } | null)?.gigId,
       reason: (request.data as { reason?: unknown } | null)?.reason
@@ -307,7 +339,11 @@ const firestoreListingStore: ListingStore = {
           return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
         },
         async listEmployerGigs(uid) {
-          const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+          const q = db
+            .collection('gigs')
+            .where('posterUid', '==', uid)
+            .where('status', 'in', ['active', 'pending'])
+            .limit(EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT);
           const snap = await tx.get(q);
           return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
         },
@@ -365,7 +401,7 @@ export const manageEmployerListing = onCall(CONTACT_FUNCTION_OPTIONS, async (req
         typeof request.auth?.token?.phone_number === 'string'
           ? request.auth.token.phone_number
           : null,
-      hasAppCheck: Boolean(request.app),
+      hasAppCheck: resolveHasAppCheck(request),
       payload: request.data
     });
   } catch (err) {
@@ -404,7 +440,11 @@ const firestoreAdminStore: AdminStore = {
           );
         },
         async listEmployerGigs(uid) {
-          const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+          const q = db
+            .collection('gigs')
+            .where('posterUid', '==', uid)
+            .where('status', 'in', ['active', 'pending'])
+            .limit(EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT);
           const snap = await tx.get(q);
           return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
         },
@@ -435,7 +475,7 @@ export const adminManageMarketplace = onCall(CONTACT_FUNCTION_OPTIONS, async (re
       authUid: request.auth?.uid ?? null,
       authEmail: typeof request.auth?.token?.email === 'string' ? request.auth.token.email : null,
       authEmailVerified: request.auth?.token?.email_verified === true,
-      hasAppCheck: Boolean(request.app),
+      hasAppCheck: resolveHasAppCheck(request),
       payload: request.data
     });
   } catch (err) {
@@ -490,7 +530,11 @@ const firestoreExpirationStore: ExpirationStore = {
           );
         },
         async listEmployerGigs(uid) {
-          const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+          const q = db
+            .collection('gigs')
+            .where('posterUid', '==', uid)
+            .where('status', 'in', ['active', 'pending'])
+            .limit(EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT);
           const snap = await tx.get(q);
           return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
         },

@@ -2,13 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  checkInMemorySlotBurst,
   ContactHandlerError,
   evaluateListingBurstBucket,
   evaluateRateBucket,
   extractTrustedClientIp,
+  getInMemoryBurstGuardSize,
   handleGetGigContactLink,
+  IN_MEMORY_BURST_WINDOW_MS,
   MAX_CONTACTS_PER_GIG_PER_HOUR,
   MAX_CONTACTS_PER_IP_PER_HOUR,
+  MAX_IN_MEMORY_BURST_ENTRIES,
   MAX_REPEATS_PER_SLOT_IN_MEMORY,
   MAX_TOTAL_REQUESTS_PER_IP_PER_HOUR,
   MAX_UNKNOWN_IP_CONTACTS_PER_HOUR,
@@ -569,5 +573,129 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
         nowMs: NOW + 1000
       })
     ).rejects.toMatchObject({ code: 'resource-exhausted' });
+  });
+
+  it('bounds in-memory burst guard memory under high-cardinality flood and sweeps stale entries', () => {
+    resetInMemoryBurstGuard();
+    // Flood 2,500 unique active keys inside one 10-minute window -> hard-capped at MAX_IN_MEMORY_BURST_ENTRIES
+    for (let i = 0; i < MAX_IN_MEMORY_BURST_ENTRIES + 500; i++) {
+      expect(checkInMemorySlotBurst(`ip_${i}:gig_1:whatsapp`, NOW + i)).toBe(true);
+    }
+    expect(getInMemoryBurstGuardSize()).toBeLessThanOrEqual(MAX_IN_MEMORY_BURST_ENTRIES);
+
+    // Advance past IN_MEMORY_BURST_WINDOW_MS and trigger cleanup -> all stale entries swept
+    const afterWindow = NOW + IN_MEMORY_BURST_WINDOW_MS + 10_000;
+    expect(checkInMemorySlotBurst('fresh_key', afterWindow)).toBe(true);
+    expect(getInMemoryBurstGuardSize()).toBe(1);
+  });
+
+  it('enforces production App Check isolation and blocks emulator wiring in production builds', () => {
+    const functionsIndexSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'functions/src/index.ts'),
+      'utf8'
+    );
+    const webFirebaseSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/firebase.ts'),
+      'utf8'
+    );
+
+    // 1. Production frontend build can NEVER connect to emulators (`!import.meta.env.PROD`)
+    expect(webFirebaseSrc).toContain('!import.meta.env.PROD && import.meta.env.VITE_USE_EMULATORS === \'true\'');
+
+    // 2. Backend emulator accommodation requires FUNCTIONS_EMULATOR=true + demo-* project + FIRESTORE_EMULATOR_HOST
+    expect(functionsIndexSrc).toContain("env.FUNCTIONS_EMULATOR === 'true'");
+    expect(functionsIndexSrc).toContain("env.GCLOUD_PROJECT.startsWith('demo-')");
+    expect(functionsIndexSrc).toContain('Boolean(env.FIRESTORE_EMULATOR_HOST)');
+    expect(functionsIndexSrc).toContain('enforceAppCheck: !IS_DEMO_EMULATOR');
+
+    // 3. Replicate predicate behavior across production, Cloud Run, and demo emulator environments
+    const isDemo = (env: Record<string, string | undefined>) =>
+      env.FUNCTIONS_EMULATOR === 'true' &&
+      typeof env.GCLOUD_PROJECT === 'string' &&
+      env.GCLOUD_PROJECT.startsWith('demo-') &&
+      Boolean(env.FIRESTORE_EMULATOR_HOST);
+
+    // Production khadma-oran -> NEVER bypasses App Check
+    expect(isDemo({ GCLOUD_PROJECT: 'khadma-oran' })).toBe(false);
+    expect(
+      isDemo({
+        FUNCTIONS_EMULATOR: 'true',
+        GCLOUD_PROJECT: 'khadma-oran',
+        FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080'
+      })
+    ).toBe(false);
+    // Missing FIRESTORE_EMULATOR_HOST -> NEVER bypasses App Check
+    expect(isDemo({ FUNCTIONS_EMULATOR: 'true', GCLOUD_PROJECT: 'demo-khadma' })).toBe(false);
+    // Only isolated local demo emulator -> allowed
+    expect(
+      isDemo({
+        FUNCTIONS_EMULATOR: 'true',
+        GCLOUD_PROJECT: 'demo-khadma',
+        FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080'
+      })
+    ).toBe(true);
+  });
+
+  it('fails closed on malformed expiresAt in contact retrieval while preserving legacy missing expiresAt', async () => {
+    const store = createMemoryStore(
+      {
+        g_malformed_str: {
+          status: 'active',
+          isSample: false,
+          contactMethods: ['whatsapp'],
+          expiresAt: 'corrupted-date'
+        },
+        g_malformed_neg: {
+          status: 'active',
+          isSample: false,
+          contactMethods: ['whatsapp'],
+          expiresAt: -1
+        },
+        g_legacy_null: {
+          status: 'active',
+          isSample: false,
+          contactMethods: ['whatsapp'],
+          expiresAt: null
+        }
+      },
+      {
+        g_malformed_str: { contactPhone: '+213550123456', whatsappConsent: true },
+        g_malformed_neg: { contactPhone: '+213550123456', whatsappConsent: true },
+        g_legacy_null: { contactPhone: '+213550123456', whatsappConsent: true }
+      }
+    );
+
+    await expect(
+      handleGetGigContactLink(store, {
+        hasAppCheck: true,
+        clientIp: '41.100.1.9',
+        gigId: 'g_malformed_str',
+        channel: 'whatsapp',
+        lang: 'fr',
+        nowMs: NOW
+      })
+    ).rejects.toMatchObject({ code: 'not-found' });
+
+    await expect(
+      handleGetGigContactLink(store, {
+        hasAppCheck: true,
+        clientIp: '41.100.1.9',
+        gigId: 'g_malformed_neg',
+        channel: 'whatsapp',
+        lang: 'fr',
+        nowMs: NOW
+      })
+    ).rejects.toMatchObject({ code: 'not-found' });
+
+    await expect(
+      handleGetGigContactLink(store, {
+        hasAppCheck: true,
+        clientIp: '41.100.1.9',
+        gigId: 'g_legacy_null',
+        channel: 'whatsapp',
+        lang: 'fr',
+        nowMs: NOW
+      })
+    ).resolves.toMatchObject({ channel: 'whatsapp' });
   });
 });

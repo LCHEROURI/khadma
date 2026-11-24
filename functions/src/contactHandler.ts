@@ -218,26 +218,53 @@ export function sanitizeSubjectTitle(title: unknown): string {
   return cleaned.slice(0, 80);
 }
 
-export function parseExpiresAtMs(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (value instanceof Date && Number.isFinite(value.getTime())) return value.getTime();
+export type ExpirationClassification =
+  | { kind: 'legacy_missing' }
+  | { kind: 'valid'; expiresAtMs: number }
+  | { kind: 'malformed' };
+
+export function classifyExpiresAt(value: unknown): ExpirationClassification {
+  if (value === null || value === undefined) return { kind: 'legacy_missing' };
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0
+      ? { kind: 'valid', expiresAtMs: value }
+      : { kind: 'malformed' };
+  }
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) && ms > 0
+      ? { kind: 'valid', expiresAtMs: ms }
+      : { kind: 'malformed' };
+  }
   if (typeof value === 'object') {
     const rec = value as { toMillis?: unknown; seconds?: unknown };
     if (typeof rec.toMillis === 'function') {
       const ms = (rec.toMillis as () => unknown)();
-      return typeof ms === 'number' && Number.isFinite(ms) ? ms : null;
+      return typeof ms === 'number' && Number.isFinite(ms) && ms > 0
+        ? { kind: 'valid', expiresAtMs: ms }
+        : { kind: 'malformed' };
     }
-    if (typeof rec.seconds === 'number' && Number.isFinite(rec.seconds)) {
-      return rec.seconds * 1000;
+    if (typeof rec.seconds === 'number') {
+      const ms = rec.seconds * 1000;
+      return Number.isFinite(ms) && ms > 0
+        ? { kind: 'valid', expiresAtMs: ms }
+        : { kind: 'malformed' };
     }
   }
-  return null;
+  return { kind: 'malformed' };
 }
+
+export function parseExpiresAtMs(value: unknown): number | null {
+  const c = classifyExpiresAt(value);
+  return c.kind === 'valid' ? c.expiresAtMs : null;
+}
+
+export const MAX_IN_MEMORY_BURST_ENTRIES = 2000;
 
 /**
  * Lightweight in-memory per-instance burst guard for repetitive single-target clicks.
  * Sheds rapid repetitive loops at 0 Firestore reads/writes before entering transactions.
+ * Strictly bounded to MAX_IN_MEMORY_BURST_ENTRIES with stale-first + oldest-entry eviction.
  */
 const inMemoryRepeatBuckets = new Map<string, { count: number; windowStartMs: number }>();
 
@@ -245,16 +272,27 @@ export function resetInMemoryBurstGuard(): void {
   inMemoryRepeatBuckets.clear();
 }
 
+export function getInMemoryBurstGuardSize(): number {
+  return inMemoryRepeatBuckets.size;
+}
+
 export function checkInMemorySlotBurst(key: string, nowMs: number): boolean {
-  if (inMemoryRepeatBuckets.size > 2000) {
+  if (inMemoryRepeatBuckets.size >= MAX_IN_MEMORY_BURST_ENTRIES) {
     for (const [k, v] of inMemoryRepeatBuckets) {
       if (nowMs - v.windowStartMs >= IN_MEMORY_BURST_WINDOW_MS) {
         inMemoryRepeatBuckets.delete(k);
       }
     }
+    // Hard cap: if still at/over capacity after sweeping expired entries, evict oldest entries.
+    while (inMemoryRepeatBuckets.size >= MAX_IN_MEMORY_BURST_ENTRIES) {
+      const oldestKey = inMemoryRepeatBuckets.keys().next().value;
+      if (oldestKey === undefined) break;
+      inMemoryRepeatBuckets.delete(oldestKey);
+    }
   }
   const existing = inMemoryRepeatBuckets.get(key);
   if (!existing || nowMs - existing.windowStartMs >= IN_MEMORY_BURST_WINDOW_MS) {
+    inMemoryRepeatBuckets.delete(key);
     inMemoryRepeatBuckets.set(key, { count: 1, windowStartMs: nowMs });
     return true;
   }
@@ -396,12 +434,10 @@ export async function handleGetGigContactLink(
   }
 
   // Enforce expiration even if status has not yet transitioned to 'expired'.
-  // Legacy V1.3 docs without expiresAt remain eligible.
-  if (gig.expiresAt !== undefined && gig.expiresAt !== null) {
-    const expiresAtMs = parseExpiresAtMs(gig.expiresAt);
-    if (expiresAtMs === null || expiresAtMs <= nowMs) {
-      throw new ContactHandlerError('not-found', 'Contact unavailable.');
-    }
+  // Legacy V1.3 docs with missing expiresAt remain eligible; malformed timestamps fail closed.
+  const expClass = classifyExpiresAt(gig.expiresAt);
+  if (expClass.kind === 'malformed' || (expClass.kind === 'valid' && expClass.expiresAtMs <= nowMs)) {
+    throw new ContactHandlerError('not-found', 'Contact unavailable.');
   }
 
   if (!isChannelEnabledOnGig(gig, channel)) {

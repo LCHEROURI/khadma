@@ -1,5 +1,10 @@
-import { parseExpiresAtMs } from './contactHandler.js';
-import type { AuditRecordInput, StoredEmployerProfile, StoredGig } from './listingHandler.js';
+import { classifyExpiresAt } from './contactHandler.js';
+import {
+  EMPLOYER_ACTIVE_QUERY_LIMIT,
+  type AuditRecordInput,
+  type StoredEmployerProfile,
+  type StoredGig
+} from './listingHandler.js';
 
 export const EXPIRATION_BATCH_SIZE = 200;
 export const EXPIRATION_MAX_BATCHES_PER_RUN = 5;
@@ -70,11 +75,12 @@ export async function runExpireStaleGigs(
         if (!gig || gig.status !== 'active') {
           return { expired: false, missingEmployer: false, driftReconciled: false };
         }
-        const expMs = parseExpiresAtMs(gig.expiresAt);
-        if (expMs === null || expMs > nowMs) {
+        const expClass = classifyExpiresAt(gig.expiresAt);
+        if (expClass.kind === 'legacy_missing' || (expClass.kind === 'valid' && expClass.expiresAtMs > nowMs)) {
           // Concurrent renewal extended expiresAt before this transaction ran -> safe skip!
           return { expired: false, missingEmployer: false, driftReconciled: false };
         }
+        const expMs = expClass.kind === 'valid' ? expClass.expiresAtMs : null;
 
         const hasOwner = Boolean(gig.posterUid && gig.posterUid !== 'sample');
         const employer = hasOwner ? await tx.getEmployer(gig.posterUid) : null;
@@ -99,6 +105,7 @@ export async function runExpireStaleGigs(
           return { expired: true, missingEmployer: true, driftReconciled: false };
         }
 
+        const overflowed = employerGigs.length > EMPLOYER_ACTIVE_QUERY_LIMIT;
         let remainingActiveOrPending = 0;
         for (const eg of employerGigs) {
           if (eg.id === gigId) continue;
@@ -108,7 +115,11 @@ export async function runExpireStaleGigs(
         }
 
         const expectedWithoutDrift = Math.max(0, employer.activeCount - 1);
-        const driftDetected = expectedWithoutDrift !== remainingActiveOrPending;
+        // On overflow (>50 active/pending), NEVER silently reduce activeCount to a truncated count.
+        const nextActiveCount = overflowed
+          ? Math.max(expectedWithoutDrift, remainingActiveOrPending)
+          : remainingActiveOrPending;
+        const driftDetected = overflowed || expectedWithoutDrift !== nextActiveCount;
         if (driftDetected) {
           tx.writeAuditLog({
             actorUid: 'system:expireStaleGigs',
@@ -117,9 +128,10 @@ export async function runExpireStaleGigs(
             targetType: 'employer',
             targetId: employer.uid,
             metadata: {
+              ...(overflowed ? { overflowDetected: true } : {}),
               previousCount: employer.activeCount,
               expectedAfterDecrement: expectedWithoutDrift,
-              reconciledCount: remainingActiveOrPending
+              reconciledCount: nextActiveCount
             },
             nowMs
           });
@@ -127,7 +139,7 @@ export async function runExpireStaleGigs(
 
         tx.setEmployer(employer.uid, {
           ...employer,
-          activeCount: remainingActiveOrPending,
+          activeCount: nextActiveCount,
           updatedAt: nowMs
         });
 

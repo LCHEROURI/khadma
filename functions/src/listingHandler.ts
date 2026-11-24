@@ -17,6 +17,7 @@ import {
   type ListingType
 } from './types.js';
 import {
+  classifyExpiresAt,
   normalizeDzPhoneServer,
   parseExpiresAtMs,
   validateContactEmailServer
@@ -431,23 +432,37 @@ async function resolveAndProvisionEmployer(
   return { employer: created, needsPersist: true };
 }
 
+export const EMPLOYER_ACTIVE_QUERY_LIMIT = 50;
+
 /**
  * Lazily transitions any of the employer's active listings whose expiresAt <= nowMs
- * to 'expired' and reconciles activeCount from ground truth inside the transaction.
- * Logs counter drift explicitly rather than silently masking it.
+ * (or whose expiresAt is malformed/corrupted) to 'expired' and reconciles activeCount
+ * from ground truth inside the transaction.
+ *
+ * Overflow safety: `listEmployerGigs` fetches up to `EMPLOYER_ACTIVE_QUERY_LIMIT + 1` (51)
+ * active/pending docs. If >50 are returned, the result is truncated and MUST NOT be treated
+ * as an authoritative total — activeCount is never silently reduced below stored or observed count.
  */
 async function reconcileEmployerQuotaAndExpiry(
   tx: ListingTxContext,
   employer: StoredEmployerProfile,
   nowMs: number
-): Promise<{ employer: StoredEmployerProfile; gigs: StoredGig[]; actualActiveOrPending: number }> {
+): Promise<{
+  employer: StoredEmployerProfile;
+  gigs: StoredGig[];
+  actualActiveOrPending: number;
+  overflowed: boolean;
+}> {
   const gigs = await tx.listEmployerGigs(employer.uid);
-  let actualActiveOrPending = 0;
+  const overflowed = gigs.length > EMPLOYER_ACTIVE_QUERY_LIMIT;
+  let observedActiveOrPending = 0;
 
   for (const g of gigs) {
     if (g.status === 'active') {
-      const expMs = parseExpiresAtMs(g.expiresAt);
-      if (expMs !== null && expMs <= nowMs) {
+      const expClass = classifyExpiresAt(g.expiresAt);
+      const shouldExpire =
+        expClass.kind === 'malformed' || (expClass.kind === 'valid' && expClass.expiresAtMs <= nowMs);
+      if (shouldExpire) {
         tx.updateGig(g.id, { status: 'expired', updatedAt: nowMs });
         g.status = 'expired';
         tx.writeAuditLog({
@@ -456,33 +471,62 @@ async function reconcileEmployerQuotaAndExpiry(
           action: 'expire',
           targetType: 'gig',
           targetId: g.id,
-          metadata: { source: 'lazy_reconcile', previousStatus: 'active' },
+          metadata: {
+            source: 'lazy_reconcile',
+            previousStatus: 'active',
+            ...(expClass.kind === 'malformed' ? { malformedExpiresAt: true } : {})
+          },
           nowMs
         });
         continue;
       }
-      actualActiveOrPending += 1;
+      observedActiveOrPending += 1;
     } else if (g.status === 'pending') {
-      actualActiveOrPending += 1;
+      observedActiveOrPending += 1;
     }
   }
 
-  if (employer.activeCount !== actualActiveOrPending) {
+  if (overflowed) {
+    // Truncated query result: NEVER silently reduce activeCount or treat 50 as authoritative.
+    const safeMinimumCount = Math.max(employer.activeCount, observedActiveOrPending);
     tx.writeAuditLog({
       actorUid: employer.uid,
       actorRole: 'system',
       action: 'counter_reconciled',
       targetType: 'employer',
       targetId: employer.uid,
-      metadata: { previousCount: employer.activeCount, reconciledCount: actualActiveOrPending },
+      metadata: {
+        overflowDetected: true,
+        previousCount: employer.activeCount,
+        observedMinimumCount: observedActiveOrPending,
+        retainedCount: safeMinimumCount
+      },
       nowMs
     });
-    const reconciled = { ...employer, activeCount: actualActiveOrPending, updatedAt: nowMs };
-    tx.setEmployer(employer.uid, reconciled);
-    return { employer: reconciled, gigs, actualActiveOrPending };
+    if (safeMinimumCount !== employer.activeCount) {
+      const raised = { ...employer, activeCount: safeMinimumCount, updatedAt: nowMs };
+      tx.setEmployer(employer.uid, raised);
+      return { employer: raised, gigs, actualActiveOrPending: safeMinimumCount, overflowed: true };
+    }
+    return { employer, gigs, actualActiveOrPending: safeMinimumCount, overflowed: true };
   }
 
-  return { employer, gigs, actualActiveOrPending };
+  if (employer.activeCount !== observedActiveOrPending) {
+    tx.writeAuditLog({
+      actorUid: employer.uid,
+      actorRole: 'system',
+      action: 'counter_reconciled',
+      targetType: 'employer',
+      targetId: employer.uid,
+      metadata: { previousCount: employer.activeCount, reconciledCount: observedActiveOrPending },
+      nowMs
+    });
+    const reconciled = { ...employer, activeCount: observedActiveOrPending, updatedAt: nowMs };
+    tx.setEmployer(employer.uid, reconciled);
+    return { employer: reconciled, gigs, actualActiveOrPending: observedActiveOrPending, overflowed: false };
+  }
+
+  return { employer, gigs, actualActiveOrPending: observedActiveOrPending, overflowed: false };
 }
 
 export async function handleManageEmployerListing(
@@ -800,13 +844,20 @@ export async function handleManageEmployerListing(
           'Only active advertisements can be renewed.'
         );
       }
-      const currentExpiryMs = parseExpiresAtMs(gig.expiresAt);
-      if (currentExpiryMs === null) {
+      const expClass = classifyExpiresAt(gig.expiresAt);
+      if (expClass.kind === 'legacy_missing') {
         throw new ListingHandlerError(
           'failed-precondition',
           'Legacy advertisements without an expiration date do not need renewal.'
         );
       }
+      if (expClass.kind === 'malformed') {
+        throw new ListingHandlerError(
+          'failed-precondition',
+          'Advertisement has a corrupted expiration timestamp. Use republish instead.'
+        );
+      }
+      const currentExpiryMs = expClass.expiresAtMs;
       if (nowMs >= currentExpiryMs) {
         throw new ListingHandlerError(
           'failed-precondition',
@@ -861,11 +912,12 @@ export async function handleManageEmployerListing(
       actualActiveOrPending
     } = await reconcileEmployerQuotaAndExpiry(tx, employer, nowMs);
     const refreshedGig = reconciledGigs.find((g) => g.id === gigId) ?? gig;
-    // Also treat an active ad whose expiresAt <= nowMs as expired after lazy reconciliation
+    // Also treat an active ad whose expiresAt <= nowMs OR is malformed as expired after lazy reconciliation
+    const repExpClass = classifyExpiresAt(refreshedGig.expiresAt);
     const effectiveStatus =
       refreshedGig.status === 'active' &&
-      parseExpiresAtMs(refreshedGig.expiresAt) !== null &&
-      (parseExpiresAtMs(refreshedGig.expiresAt) as number) <= nowMs
+      (repExpClass.kind === 'malformed' ||
+        (repExpClass.kind === 'valid' && repExpClass.expiresAtMs <= nowMs))
         ? 'expired'
         : refreshedGig.status;
 

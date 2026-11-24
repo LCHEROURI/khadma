@@ -318,4 +318,196 @@ describe('Real Firestore Emulator Transactions — Concurrency, Atomicity, Fail-
       })
     ).rejects.toMatchObject({ code: 'permission-denied' });
   });
+
+  it('bounds employer quota reconciliation reads with 60 historical archived/expired ads on real Firestore', async () => {
+    const { db, listingStore } = createFirestoreEmulatorStores();
+    await db
+      .collection(SETTINGS_COLLECTION)
+      .doc(MARKETPLACE_SETTINGS_DOC_ID)
+      .set({ requirePreApproval: false, remoderateMaterialEdits: true });
+
+    // Seed 60 historical archived/expired listings for employer u_hist
+    const batch = db.batch();
+    for (let i = 0; i < 60; i++) {
+      const ref = db.collection('gigs').doc(`hist_${i}`);
+      batch.set(ref, {
+        title: `Historical Ad ${i}`,
+        description: 'Historical listing',
+        category: 'delivery',
+        listingType: 'job',
+        city: 'oran',
+        wilayaCode: '31',
+        contactMethods: ['whatsapp'],
+        payMin: 2000,
+        payMax: 3000,
+        neighborhood: 'Es Sénia',
+        posterUid: 'u_hist',
+        flags: 0,
+        status: i % 2 === 0 ? 'archived' : 'expired',
+        verified: true,
+        isSample: false,
+        createdAt: NOW - 100_000 - i
+      });
+    }
+    await batch.commit();
+
+    // Create 3 active ads -> all 3 succeed despite 60 historical ads!
+    for (let i = 1; i <= 3; i++) {
+      const created = await handleManageEmployerListing(listingStore, {
+        authUid: 'u_hist',
+        authEmail: 'hist@oran.dz',
+        authEmailVerified: true,
+        authPhone: null,
+        hasAppCheck: true,
+        payload: validCreatePayload({ title: `Active Ad ${i}` }),
+        nowMs: NOW + i * 10
+      });
+      expect(created.quotaUsed).toBe(i);
+    }
+
+    // 4th active ad -> strictly rejected at quota 3/3
+    await expect(
+      handleManageEmployerListing(listingStore, {
+        authUid: 'u_hist',
+        authEmail: 'hist@oran.dz',
+        authEmailVerified: true,
+        authPhone: null,
+        hasAppCheck: true,
+        payload: validCreatePayload({ title: 'Active Ad 4 Blocked' }),
+        nowMs: NOW + 100
+      })
+    ).rejects.toMatchObject({ code: 'resource-exhausted' });
+
+    const empSnap = await db.collection('employers').doc('u_hist').get();
+    expect(empSnap.data()?.activeCount).toBe(3);
+  });
+
+  it('handles exact 50 and >50 active/pending overflow safely on real Firestore without silently reducing activeCount', async () => {
+    const { db, listingStore } = createFirestoreEmulatorStores();
+    await db
+      .collection(SETTINGS_COLLECTION)
+      .doc(MARKETPLACE_SETTINGS_DOC_ID)
+      .set({ requirePreApproval: false, remoderateMaterialEdits: true });
+
+    // Case A: Exactly 50 active ads with corrupted activeCount = 2 -> reconciles to exact 50 & blocks new create
+    await db.collection('employers').doc('u_exact50').set({
+      uid: 'u_exact50',
+      email: 'exact50@oran.dz',
+      legacyPhone: null,
+      legacyGrandfathered: false,
+      legacyCutoffVerified: false,
+      maxActiveGigs: 3,
+      activeCount: 2, // corrupted counter
+      trustLevel: 'new',
+      suspended: false
+    });
+    const batch50 = db.batch();
+    for (let i = 0; i < 50; i++) {
+      batch50.set(db.collection('gigs').doc(`e50_${i}`), {
+        title: `Exact50 Ad ${i}`,
+        description: 'Active listing',
+        category: 'delivery',
+        listingType: 'job',
+        city: 'oran',
+        wilayaCode: '31',
+        contactMethods: ['whatsapp'],
+        payMin: 2000,
+        payMax: 3000,
+        neighborhood: 'Es Sénia',
+        posterUid: 'u_exact50',
+        flags: 0,
+        status: 'active',
+        verified: true,
+        isSample: false,
+        createdAt: NOW - 10_000 - i
+      });
+    }
+    await batch50.commit();
+
+    await expect(
+      handleManageEmployerListing(listingStore, {
+        authUid: 'u_exact50',
+        authEmail: 'exact50@oran.dz',
+        authEmailVerified: true,
+        authPhone: null,
+        hasAppCheck: true,
+        payload: validCreatePayload({ title: 'Blocked At 50' }),
+        nowMs: NOW
+      })
+    ).rejects.toMatchObject({ code: 'resource-exhausted' });
+
+    // Archiving one of the 50 reconciles exact count to 49
+    const arch50 = await handleManageEmployerListing(listingStore, {
+      authUid: 'u_exact50',
+      authEmail: 'exact50@oran.dz',
+      authEmailVerified: true,
+      authPhone: null,
+      hasAppCheck: true,
+      payload: { action: 'archive', gigId: 'e50_0' },
+      nowMs: NOW + 10
+    });
+    expect(arch50.quotaUsed).toBe(49);
+
+    // Case B: 55 active ads (>50 overflow!) with stored activeCount = 55 -> MUST NOT silently reduce to 50!
+    await db.collection('employers').doc('u_over50').set({
+      uid: 'u_over50',
+      email: 'over50@oran.dz',
+      legacyPhone: null,
+      legacyGrandfathered: false,
+      legacyCutoffVerified: false,
+      maxActiveGigs: 3,
+      activeCount: 55,
+      trustLevel: 'new',
+      suspended: false
+    });
+    const batch55 = db.batch();
+    for (let i = 0; i < 55; i++) {
+      batch55.set(db.collection('gigs').doc(`o55_${i}`), {
+        title: `Over50 Ad ${i}`,
+        description: 'Active listing',
+        category: 'delivery',
+        listingType: 'job',
+        city: 'oran',
+        wilayaCode: '31',
+        contactMethods: ['whatsapp'],
+        payMin: 2000,
+        payMax: 3000,
+        neighborhood: 'Es Sénia',
+        posterUid: 'u_over50',
+        flags: 0,
+        status: 'active',
+        verified: true,
+        isSample: false,
+        createdAt: NOW - 10_000 - i
+      });
+    }
+    await batch55.commit();
+
+    // New create is rejected with resource-exhausted
+    await expect(
+      handleManageEmployerListing(listingStore, {
+        authUid: 'u_over50',
+        authEmail: 'over50@oran.dz',
+        authEmailVerified: true,
+        authPhone: null,
+        hasAppCheck: true,
+        payload: validCreatePayload({ title: 'Blocked Over 50' }),
+        nowMs: NOW + 20
+      })
+    ).rejects.toMatchObject({ code: 'resource-exhausted' });
+
+    // Archiving one of the 55 decrements 55 -> 54 (NEVER silently truncated to 49/50!)
+    const arch55 = await handleManageEmployerListing(listingStore, {
+      authUid: 'u_over50',
+      authEmail: 'over50@oran.dz',
+      authEmailVerified: true,
+      authPhone: null,
+      hasAppCheck: true,
+      payload: { action: 'archive', gigId: 'o55_0' },
+      nowMs: NOW + 30
+    });
+    expect(arch55.quotaUsed).toBe(54);
+    const overSnap = await db.collection('employers').doc('u_over50').get();
+    expect(overSnap.data()?.activeCount).toBe(54);
+  });
 });

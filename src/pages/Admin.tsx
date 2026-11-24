@@ -25,7 +25,40 @@ import type {
 } from '../lib/types';
 import { Icon } from '../components/Icon';
 
-type AdminTab = 'pending' | 'flagged' | 'latest' | 'employers' | 'audit';
+const FIREBASE_PROJECT_ID = 'khadma-oran';
+
+const MONITORING_CONSOLE_LINKS = [
+  {
+    key: 'admin.monitoring.authUsage',
+    url: `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/usage`
+  },
+  {
+    key: 'admin.monitoring.firestoreUsage',
+    url: `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/firestore/usage`
+  },
+  {
+    key: 'admin.monitoring.functionsMonitoring',
+    url: `https://console.cloud.google.com/functions/list?project=${FIREBASE_PROJECT_ID}`
+  },
+  {
+    key: 'admin.monitoring.cloudBilling',
+    url: `https://console.cloud.google.com/billing?project=${FIREBASE_PROJECT_ID}`
+  },
+  {
+    key: 'admin.monitoring.billingBudgets',
+    url: `https://console.cloud.google.com/billing/budgets?project=${FIREBASE_PROJECT_ID}`
+  },
+  {
+    key: 'admin.monitoring.schedulerHistory',
+    url: `https://console.cloud.google.com/cloudscheduler?project=${FIREBASE_PROJECT_ID}`
+  },
+  {
+    key: 'admin.monitoring.appCheckMetrics',
+    url: `https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/appcheck/metrics`
+  }
+] as const;
+
+type AdminTab = 'pending' | 'flagged' | 'latest' | 'employers' | 'audit' | 'monitoring';
 
 export function Admin() {
   const { t } = useLang();
@@ -322,6 +355,9 @@ export function Admin() {
         <button className={`tab${tab === 'audit' ? ' active' : ''}`} onClick={() => setTab('audit')}>
           {t('admin.tabs.audit')}
         </button>
+        <button className={`tab${tab === 'monitoring' ? ' active' : ''}`} onClick={() => setTab('monitoring')}>
+          {t('admin.tabs.monitoring')}
+        </button>
       </div>
 
       <div className="admin-tools">
@@ -350,7 +386,40 @@ export function Admin() {
       </div>
       {notice && <p className="form-error">{notice}</p>}
 
-      {tab === 'employers' ? (
+      {tab === 'monitoring' ? (
+        <section className="card monitoring-card" aria-labelledby="admin-monitoring-title">
+          <h2 id="admin-monitoring-title" className="section-title">
+            {t('admin.monitoring.title')}
+          </h2>
+          <p className="muted small">{t('admin.monitoring.subtitle')}</p>
+          <p className="muted small">{t('admin.monitoring.consoleDisclaimer')}</p>
+
+          <div className="monitoring-list">
+            {MONITORING_CONSOLE_LINKS.map((item) => (
+              <div key={item.key} className="admin-row">
+                <div className="admin-row-main">
+                  <div className="admin-row-title">{t(item.key)}</div>
+                </div>
+                <div className="admin-row-actions">
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-small btn-ghost"
+                  >
+                    {t('admin.monitoring.openConsole')}
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="status-note">
+            <strong>{t('admin.monitoring.budgetThresholdsTitle')}</strong>
+            <p className="small">{t('admin.monitoring.budgetThresholdsNote')}</p>
+          </div>
+        </section>
+      ) : tab === 'employers' ? (
         employers === null ? (
           <p className="muted center">{t('common.loading')}</p>
         ) : employers.length === 0 ? (

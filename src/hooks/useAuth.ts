@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { onAuthStateChanged, type User } from 'firebase/auth';
+import { onIdTokenChanged, type User } from 'firebase/auth';
 import { auth } from '../firebase';
 import { ADMIN_EMAIL } from '../lib/constants';
 
@@ -23,9 +23,11 @@ export function useAuth(): AuthState {
   const [, setVersion] = useState(0);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
+    const unsub = onIdTokenChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
+      // Force re-render even when Firebase mutates the same User reference (e.g. reload() + getIdToken(true))
+      setVersion((v) => v + 1);
     });
     return unsub;
   }, []);

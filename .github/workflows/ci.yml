@@ -47,14 +47,17 @@ jobs:
       - name: Run unit & security tests
         run: npm run test:unit && npm run test:security
 
-      - name: Install Firebase CLI & run Firestore Security Rules tests
+      - name: Install Firebase CLI & run Firestore Rules, Auth & Integration emulator tests
         run: |
           npm install -g firebase-tools
           npm run test:rules
+          npm run test:auth
+          npm run test:integration
 
-      - name: Install Playwright Chromium & run E2E smoke tests
+      - name: Install Playwright Chromium & run E2E + Full-Stack Emulator E2E tests
         env:
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || 'ci-placeholder-key' }}
         run: |
           npx playwright install --with-deps chromium
           npm run test:e2e
+          npm run test:e2e:emulator

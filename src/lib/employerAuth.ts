@@ -10,6 +10,7 @@ import {
   type User
 } from 'firebase/auth';
 import { LEGACY_EMPLOYER_MAX_ACTIVE_GIGS, NEW_EMPLOYER_MAX_ACTIVE_GIGS } from './constants';
+import { publicBrowseCache } from './browseCache';
 import type { EmployerProfile } from './types';
 
 export const VERIFICATION_RESEND_COOLDOWN_MS = 60_000;
@@ -192,6 +193,7 @@ export async function signInEmployerWithEmail(
 }
 
 export async function signOutEmployer(authInstance: Auth): Promise<void> {
+  publicBrowseCache.invalidate();
   await signOut(authInstance);
 }
 

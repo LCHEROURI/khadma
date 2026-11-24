@@ -29,6 +29,7 @@ import type {
 } from './types';
 import { isSafeContactUrl } from './contactLink';
 import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
+import { buildBrowseCacheKey, publicBrowseCache } from './browseCache';
 import { SAMPLE_GIGS } from './samples';
 import { readStringList, writeStringList } from './storage';
 
@@ -44,45 +45,82 @@ export class AlreadyReportedError extends Error {
   }
 }
 
-// ---------- Browse ----------
+// ---------- Browse (Bounded 2-Min Public Session Cache) ----------
+
+export function invalidatePublicBrowseCache(gigId?: string): void {
+  publicBrowseCache.invalidate(gigId);
+}
+
+export interface ActiveGigsPageOptions {
+  bypassCache?: boolean;
+  mode?: string;
+  category?: string;
+  neighborhood?: string;
+}
 
 export async function getActiveGigsPage(
   after: QueryDocumentSnapshot<DocumentData> | null = null,
-  pageSize = BROWSE_PAGE_SIZE
+  pageSize = BROWSE_PAGE_SIZE,
+  options: ActiveGigsPageOptions = {}
 ): Promise<{ gigs: Gig[]; lastDoc: QueryDocumentSnapshot<DocumentData> | null; hasMore: boolean }> {
-  const q = after
-    ? query(
-        collection(db, 'gigs'),
-        where('status', '==', 'active'),
-        orderBy('createdAt', 'desc'),
-        startAfter(after),
-        limit(pageSize)
-      )
-    : query(
-        collection(db, 'gigs'),
-        where('status', '==', 'active'),
-        orderBy('createdAt', 'desc'),
-        limit(pageSize)
-      );
-  const snap = await getDocs(q);
-  const gigs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
-  const hasMore = snap.docs.length === pageSize;
-  return {
-    gigs,
-    lastDoc: hasMore ? snap.docs[snap.docs.length - 1] : null,
-    hasMore
-  };
+  const key = buildBrowseCacheKey({
+    mode: options.mode,
+    category: options.category,
+    neighborhood: options.neighborhood,
+    cursorId: after?.id ?? null,
+    pageSize
+  });
+
+  return publicBrowseCache.getOrFetchPage(
+    key,
+    async () => {
+      const q = after
+        ? query(
+            collection(db, 'gigs'),
+            where('status', '==', 'active'),
+            orderBy('createdAt', 'desc'),
+            startAfter(after),
+            limit(pageSize)
+          )
+        : query(
+            collection(db, 'gigs'),
+            where('status', '==', 'active'),
+            orderBy('createdAt', 'desc'),
+            limit(pageSize)
+          );
+      const snap = await getDocs(q);
+      const gigs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+      const hasMore = snap.docs.length === pageSize;
+      return {
+        gigs,
+        lastDoc: hasMore ? snap.docs[snap.docs.length - 1] : null,
+        hasMore
+      };
+    },
+    { bypassCache: options.bypassCache }
+  ) as Promise<{
+    gigs: Gig[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+    hasMore: boolean;
+  }>;
 }
 
-export async function getGig(id: string): Promise<Gig | null> {
-  const snap = await getDoc(doc(db, 'gigs', id));
-  if (!snap.exists()) return null;
-  return { id: snap.id, ...snap.data() } as Gig;
+export async function getGig(id: string, options: { bypassCache?: boolean } = {}): Promise<Gig | null> {
+  return publicBrowseCache.getOrFetchPublicGig(
+    id,
+    async () => {
+      const snap = await getDoc(doc(db, 'gigs', id));
+      if (!snap.exists()) return null;
+      return { id: snap.id, ...snap.data() } as Gig;
+    },
+    { bypassCache: options.bypassCache }
+  );
 }
 
 export async function getGigsByIds(ids: string[]): Promise<Gig[]> {
+  const uniqueIds = Array.from(new Set(ids)).slice(0, 60);
   const results = await Promise.all(
-    ids.slice(0, 60).map((id) => getGig(id).catch(() => null))
+    uniqueIds.map((id) => getGig(id).catch(() => null))
   );
   return results.filter((g): g is Gig => g !== null);
 }
@@ -175,6 +213,7 @@ export async function callManageEmployerListing(
     'manageEmployerListing'
   );
   const res = await call(payload);
+  invalidatePublicBrowseCache(res.data?.gigId);
   return res.data;
 }
 
@@ -196,6 +235,7 @@ export async function callAdminManageMarketplace(
     'adminManageMarketplace'
   );
   const res = await call(payload);
+  invalidatePublicBrowseCache(typeof payload.gigId === 'string' ? payload.gigId : undefined);
   return res.data;
 }
 
@@ -267,6 +307,7 @@ export async function reportGig(gigId: string, reason: ReportReason): Promise<vo
   );
   try {
     await call({ gigId, reason });
+    invalidatePublicBrowseCache(gigId);
   } catch (err) {
     const code = (err as { code?: string }).code ?? '';
     if (code === 'functions/already-exists') {

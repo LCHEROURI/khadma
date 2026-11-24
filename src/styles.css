@@ -1630,3 +1630,37 @@ textarea {
   background: var(--surface-2, #eef2ef);
   color: var(--ink-2);
 }
+
+/* Phase 5: Results refresh bar & Admin operational monitoring */
+.tabs {
+  flex-wrap: wrap;
+}
+
+.tabs .tab {
+  flex: 1 1 auto;
+  min-width: fit-content;
+}
+
+.results-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.results-bar .results-count {
+  margin: 0;
+}
+
+.monitoring-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.monitoring-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

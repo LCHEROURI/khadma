@@ -132,7 +132,11 @@ export function createFirestoreEmulatorStores() {
             return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
           },
           async listEmployerGigs(uid) {
-            const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+            const q = db
+              .collection('gigs')
+              .where('posterUid', '==', uid)
+              .where('status', 'in', ['active', 'pending'])
+              .limit(51);
             const snap = await tx.get(q);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return snap.docs.map((d: any) => ({ id: d.id, ...d.data() }) as StoredGig);
@@ -208,7 +212,11 @@ export function createFirestoreEmulatorStores() {
             );
           },
           async listEmployerGigs(uid) {
-            const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+            const q = db
+              .collection('gigs')
+              .where('posterUid', '==', uid)
+              .where('status', 'in', ['active', 'pending'])
+              .limit(51);
             const snap = await tx.get(q);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return snap.docs.map((d: any) => ({ id: d.id, ...d.data() }) as StoredGig);
@@ -278,7 +286,11 @@ export function createFirestoreEmulatorStores() {
             );
           },
           async listEmployerGigs(uid) {
-            const q = db.collection('gigs').where('posterUid', '==', uid).limit(100);
+            const q = db
+              .collection('gigs')
+              .where('posterUid', '==', uid)
+              .where('status', 'in', ['active', 'pending'])
+              .limit(51);
             const snap = await tx.get(q);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return snap.docs.map((d: any) => ({ id: d.id, ...d.data() }) as StoredGig);

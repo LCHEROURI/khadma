@@ -6,6 +6,7 @@ import {
   type GigStatus
 } from './types.js';
 import {
+  EMPLOYER_ACTIVE_QUERY_LIMIT,
   ListingHandlerError,
   resolveModerationPolicy,
   type AuditRecordInput,
@@ -195,7 +196,11 @@ export async function handleAdminManageMarketplace(
           ? await tx.getEmployer(gig.posterUid)
           : null;
       const employerGigs = employer ? await tx.listEmployerGigs(employer.uid) : [];
-      const currentQuotaUsed = countActiveOrPending(employerGigs);
+      const overflowed = employerGigs.length > EMPLOYER_ACTIVE_QUERY_LIMIT;
+      const observedQuotaUsed = countActiveOrPending(employerGigs);
+      const currentQuotaUsed = overflowed
+        ? Math.max(employer?.activeCount ?? 0, observedQuotaUsed)
+        : observedQuotaUsed;
 
       if (action === 'approveGig' || action === 'restoreGig') {
         if (action === 'approveGig' && gig.status !== 'pending') {
