@@ -1,5 +1,6 @@
 import type { Gig } from './types';
 import { NEIGHBORHOOD_KEYS } from './constants';
+import { mapAuthErrorKey } from './employerAuth';
 
 const nf = new Intl.NumberFormat('fr-FR');
 
@@ -46,6 +47,6 @@ export function errKey(code: string): string {
     case 'auth/invalid-app-credential':
       return 'auth.recaptchaError';
     default:
-      return 'common.error';
+      return mapAuthErrorKey(code);
   }
 }

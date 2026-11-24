@@ -8,6 +8,7 @@ import { Home } from './pages/Home';
 
 const Browse = lazy(() => import('./pages/Browse').then((m) => ({ default: m.Browse })));
 const Employer = lazy(() => import('./pages/Employer').then((m) => ({ default: m.Employer })));
+const EmployerAuth = lazy(() => import('./pages/EmployerAuth').then((m) => ({ default: m.EmployerAuth })));
 const GigDetail = lazy(() => import('./pages/GigDetail').then((m) => ({ default: m.GigDetail })));
 const PostGig = lazy(() => import('./pages/PostGig').then((m) => ({ default: m.PostGig })));
 const Saved = lazy(() => import('./pages/Saved').then((m) => ({ default: m.Saved })));
@@ -47,6 +48,7 @@ export default function App() {
                   <Route path="/services" element={<Browse mode="service" />} />
                   <Route path="/listings" element={<Browse mode="all" />} />
                   <Route path="/employer" element={<Employer />} />
+                  <Route path="/employer/auth" element={<EmployerAuth />} />
                   <Route path="/employer/post" element={<PostGig lockedType="job" />} />
                   <Route path="/services/post" element={<PostGig lockedType="service" />} />
                   <Route path="/gig/:id" element={<GigDetail />} />

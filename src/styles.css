@@ -1494,3 +1494,43 @@ textarea {
   background: var(--red-soft);
   border: 1px solid var(--red-border);
 }
+
+/* ============================================================
+   KHADMA V1.4 Phase 2: Email Auth & Legacy Account Linking UI
+   ============================================================ */
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.auth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.employer-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.employer-auth-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.legacy-link-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: var(--s-3) 0;
+  border-color: var(--brand-border);
+}
+
+.legacy-link-card h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+}

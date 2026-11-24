@@ -17,7 +17,7 @@ import {
 import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../firebase';
-import type { Gig, GigStatus, ListingType, ReportReason } from './types';
+import type { EmployerProfile, Gig, GigStatus, ListingType, ReportReason } from './types';
 import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
 import { SAMPLE_GIGS } from './samples';
 import { readStringList, writeStringList } from './storage';
@@ -140,6 +140,12 @@ export async function getRemainingForPhone(phone: string): Promise<number> {
   const snap = await getDoc(doc(db, 'phoneCounters', phone));
   if (!snap.exists()) return MAX_ACTIVE_GIGS;
   return Math.max(0, MAX_ACTIVE_GIGS - (snap.data().count as number));
+}
+
+export async function getEmployerProfile(uid: string): Promise<EmployerProfile | null> {
+  const snap = await getDoc(doc(db, 'employers', uid));
+  if (!snap.exists()) return null;
+  return { uid: snap.id, ...snap.data() } as EmployerProfile;
 }
 
 // ---------- Contact (App Check + Auth + Server-Side Rate Limit) ----------

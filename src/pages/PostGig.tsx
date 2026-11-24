@@ -1,17 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
 import { CATEGORIES, MAX_ACTIVE_GIGS, MAX_PAY_DZD, MIN_TITLE_LENGTH, NEIGHBORHOODS } from '../lib/constants';
-import { getRemainingForPhone, postGig, RateLimitError } from '../lib/db';
-import { errKey, formatNeighborhood } from '../lib/format';
-import { normalizeDzPhone } from '../lib/phone';
-import { createFirebaseSmsAdapter, type PhoneVerificationAdapter } from '../lib/phoneAuth';
-import type { Category, ListingType } from '../lib/types';
+import { getEmployerProfile, getRemainingForPhone, postGig, RateLimitError } from '../lib/db';
+import { resolveEmployerEligibility, signOutEmployer } from '../lib/employerAuth';
+import { formatNeighborhood } from '../lib/format';
+import type { Category, EmployerProfile, ListingType } from '../lib/types';
 import { Banner } from '../components/Banner';
-
-type Step = 'verify' | 'code' | 'form';
+import { EmployerAuthPanel } from '../components/EmployerAuthPanel';
 
 export function PostGig({
   defaultType = 'job',
@@ -22,18 +20,22 @@ export function PostGig({
 }) {
   const { t } = useLang();
   const navigate = useNavigate();
-  const { phoneNumber: authPhone, loading: authLoading } = useAuth();
-  const recapRef = useRef<HTMLDivElement>(null);
-  const verifierRef = useRef<PhoneVerificationAdapter | null>(null);
+  const {
+    user,
+    email,
+    emailVerified,
+    phoneNumber: authPhone,
+    isAnonymous,
+    isPhoneUser,
+    isEmployer,
+    loading: authLoading
+  } = useAuth();
 
-  const [step, setStep] = useState<Step>(authPhone ? 'form' : 'verify');
-  const [phoneInput, setPhoneInput] = useState('');
-  const [phone, setPhone] = useState(authPhone ?? '');
-  const [code, setCode] = useState('');
+  const [profile, setProfile] = useState<EmployerProfile | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  // Form state
+  // Form state (preserved for existing legacy phone employers during Phase 2 -> Phase 4 transition)
   const [selectedType, setSelectedType] = useState<ListingType>(lockedType ?? defaultType);
   const listingType: ListingType = lockedType ?? selectedType;
   const [title, setTitle] = useState('');
@@ -45,72 +47,49 @@ export function PostGig({
   const [remaining, setRemaining] = useState<number | null>(null);
 
   useEffect(() => {
-    verifierRef.current = createFirebaseSmsAdapter(auth);
-    return () => {
-      verifierRef.current?.dispose();
-      verifierRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
     setSelectedType(lockedType ?? defaultType);
   }, [defaultType, lockedType]);
 
   useEffect(() => {
+    if (!user || !isEmployer) {
+      setProfile(null);
+      return;
+    }
+    let cancelled = false;
+    getEmployerProfile(user.uid)
+      .then((prof) => {
+        if (!cancelled) setProfile(prof);
+      })
+      .catch(() => {
+        if (!cancelled) setProfile(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, isEmployer]);
+
+  useEffect(() => {
     if (authPhone) {
-      setPhone(authPhone);
-      setStep('form');
+      getRemainingForPhone(authPhone)
+        .then(setRemaining)
+        .catch(() => setRemaining(null));
+    } else {
+      setRemaining(null);
     }
   }, [authPhone]);
 
-  useEffect(() => {
-    if (phone) {
-      getRemainingForPhone(phone)
-        .then(setRemaining)
-        .catch(() => setRemaining(null));
-    }
-  }, [phone]);
+  const eligibility = resolveEmployerEligibility(
+    {
+      uid: user?.uid ?? null,
+      email,
+      emailVerified,
+      phoneNumber: authPhone,
+      isAnonymous
+    },
+    profile
+  );
 
-  const sendCode = async () => {
-    const normalized = normalizeDzPhone(phoneInput || phone);
-    if (!normalized) {
-      setErr(t('post.phoneInvalid'));
-      return;
-    }
-    if (!recapRef.current || !verifierRef.current) {
-      setErr(t('auth.recaptchaError'));
-      return;
-    }
-    setBusy(true);
-    setErr('');
-    try {
-      await verifierRef.current.sendCode(normalized, recapRef.current);
-      setPhone(normalized);
-      setStep('code');
-    } catch (e) {
-      const code = (e as { code?: string }).code ?? '';
-      setErr(t(errKey(code)));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const confirmCode = async () => {
-    if (!verifierRef.current?.hasPendingConfirmation() || code.trim().length < 4) return;
-    setBusy(true);
-    setErr('');
-    try {
-      await verifierRef.current.confirmCode(code.trim());
-      setStep('form');
-    } catch (e) {
-      const c = (e as { code?: string }).code ?? '';
-      setErr(t(errKey(c)));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submit = async () => {
+  const submitLegacyPhonePost = async () => {
     const cleanTitle = title.trim();
     const cleanDesc = description.trim();
     if (cleanTitle.length < MIN_TITLE_LENGTH || !cleanDesc || !payMin) {
@@ -150,14 +129,8 @@ export function PostGig({
     }
   };
 
-  const changeNumber = async () => {
-    verifierRef.current?.reset();
-    await auth.signOut();
-    setPhoneInput('');
-    setPhone('');
-    setCode('');
-    setErr('');
-    setStep('verify');
+  const handleSignOut = async () => {
+    await signOutEmployer(auth);
   };
 
   const heading =
@@ -191,88 +164,37 @@ export function PostGig({
           </button>
         </div>
       )}
-      <div ref={recapRef} className="recap" />
 
       {authLoading ? (
         <p className="muted center">{t('common.loading')}</p>
-      ) : null}
-
-      {!authLoading && step === 'verify' && (
-        <form
-          className="panel"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!busy && phoneInput.trim()) void sendCode();
-          }}
-        >
-          <h2>{t('post.verifyTitle')}</h2>
-          <p className="muted">{t('post.verifyText')}</p>
-          <label className="field">
-            <span>{t('post.phoneLabel')}</span>
-            <input
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              dir="ltr"
-              placeholder={t('post.phonePlaceholder')}
-              value={phoneInput}
-              onChange={(e) => setPhoneInput(e.target.value)}
-            />
-          </label>
-          {err && <p className="form-error">{err}</p>}
-          <button type="submit" className="btn btn-primary btn-block" disabled={busy || !phoneInput.trim()}>
-            {busy ? t('common.loading') : t('post.sendCode')}
-          </button>
-        </form>
-      )}
-
-      {step === 'code' && (
-        <form
-          className="panel"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!busy && code.trim().length >= 4) void confirmCode();
-          }}
-        >
-          <h2>{t('post.codeTitle')}</h2>
-          <p className="muted">{t('post.codeText', { phone })}</p>
-          <label className="field">
-            <span>{t('post.codeLabel')}</span>
-            <input
-              type="tel"
-              inputMode="numeric"
-              dir="ltr"
-              maxLength={6}
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-            />
-          </label>
-          {err && <p className="form-error">{err}</p>}
-          <button type="submit" className="btn btn-primary btn-block" disabled={busy || code.trim().length < 4}>
-            {busy ? t('common.loading') : t('post.confirm')}
-          </button>
-          <div className="sheet-actions">
-            <button type="button" className="btn btn-ghost" onClick={sendCode} disabled={busy || !phone}>
-              {t('post.resend')}
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={changeNumber} disabled={busy}>
-              {t('post.changeNumber')}
-            </button>
+      ) : !eligibility.eligible ? (
+        eligibility.isSuspended ? (
+          <div className="panel">
+            <div className="load-more-error" role="alert">
+              <p className="form-error">{t('employer.suspendedNotice')}</p>
+            </div>
+            <div className="center">
+              <button type="button" className="btn btn-ghost" onClick={handleSignOut}>
+                {t('employer.signOut')}
+              </button>
+            </div>
           </div>
-        </form>
-      )}
-
-      {step === 'form' && (
+        ) : (
+          // Email-first registration & verification (ordinary SMS registration removed in V1.4 Phase 2)
+          <EmployerAuthPanel />
+        )
+      ) : isPhoneUser && authPhone ? (
+        // Legacy phone-authenticated employers retain V1.3 publishing until Phase 4 server callable cutover
         <form
           className="panel"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!busy) void submit();
+            if (!busy) void submitLegacyPhonePost();
           }}
         >
           <div className="verified-banner">
             <span>✓</span>
-            {t('post.verifiedAs', { phone })}
+            {t('post.verifiedAs', { phone: authPhone })}
           </div>
           {remaining !== null && (
             <p className="remaining">{t('post.remaining', { n: MAX_ACTIVE_GIGS - remaining })}</p>
@@ -280,7 +202,12 @@ export function PostGig({
           <h2>{t('post.formTitle')}</h2>
           <label className="field">
             <span>{t('post.titleLabel')} *</span>
-            <input value={title} maxLength={120} placeholder={t('post.titlePlaceholder')} onChange={(e) => setTitle(e.target.value)} />
+            <input
+              value={title}
+              maxLength={120}
+              placeholder={t('post.titlePlaceholder')}
+              onChange={(e) => setTitle(e.target.value)}
+            />
           </label>
           <label className="field">
             <span>{t('post.categoryLabel')}</span>
@@ -306,8 +233,22 @@ export function PostGig({
             <label className="field">
               <span>{t('post.payLabel')} *</span>
               <div className="pay-inputs">
-                <input type="number" inputMode="numeric" min={0} placeholder={t('post.payMin')} value={payMin} onChange={(e) => setPayMin(e.target.value)} />
-                <input type="number" inputMode="numeric" min={0} placeholder={t('post.payMax')} value={payMax} onChange={(e) => setPayMax(e.target.value)} />
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  placeholder={t('post.payMin')}
+                  value={payMin}
+                  onChange={(e) => setPayMin(e.target.value)}
+                />
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  placeholder={t('post.payMax')}
+                  value={payMax}
+                  onChange={(e) => setPayMax(e.target.value)}
+                />
                 <span className="pay-suffix">{t('common.currency')}</span>
               </div>
             </label>
@@ -324,7 +265,7 @@ export function PostGig({
           </label>
           <label className="field">
             <span>{t('post.whatsappLabel')}</span>
-            <input value={phone} disabled dir="ltr" />
+            <input value={authPhone} disabled dir="ltr" />
             <p className="field-hint">{t('post.whatsappNote')}</p>
           </label>
           {err && <p className="form-error">{err}</p>}
@@ -332,11 +273,30 @@ export function PostGig({
             {busy ? t('common.loading') : t('post.submit')}
           </button>
           <div className="center">
-            <button type="button" className="btn btn-ghost" onClick={changeNumber}>
-              {t('post.changeNumber')}
+            <button type="button" className="btn btn-ghost" onClick={handleSignOut}>
+              {t('employer.signOut')}
             </button>
           </div>
         </form>
+      ) : (
+        <div className="panel">
+          <div className="verified-banner">
+            <span>✓</span>
+            <span dir="ltr">{email}</span>
+          </div>
+          <h2>{t('post.emailReadyTitle')}</h2>
+          <p className="muted">
+            {t('post.emailReadyText', { email: email ?? '', max: eligibility.quotaMax })}
+          </p>
+          <div className="auth-actions">
+            <Link to="/employer" className="btn btn-primary btn-block">
+              {t('post.goToDashboard')}
+            </Link>
+            <button type="button" className="btn btn-ghost btn-block" onClick={handleSignOut}>
+              {t('employer.signOut')}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

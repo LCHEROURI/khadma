@@ -13,6 +13,7 @@
     "test:unit": "vitest run tests/unit",
     "test:security": "vitest run tests/security",
     "test:rules": "firebase emulators:exec --only firestore --project demo-khadma \"vitest run tests/rules\"",
+    "test:auth": "firebase emulators:exec --only auth --project demo-khadma \"vitest run tests/auth\"",
     "test:e2e": "playwright test"
   },
   "dependencies": {

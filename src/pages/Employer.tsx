@@ -1,55 +1,114 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
 import { MAX_ACTIVE_GIGS } from '../lib/constants';
-import { getMyGigs, getRemainingForPhone } from '../lib/db';
+import { getEmployerProfile, getMyGigs, getRemainingForPhone } from '../lib/db';
+import {
+  isValidEmail,
+  linkEmailToLegacyPhoneAccount,
+  mapAuthErrorKey,
+  resolveEmployerEligibility,
+  signOutEmployer,
+  validatePassword
+} from '../lib/employerAuth';
 import { formatNeighborhood, formatPay, timeAgo } from '../lib/format';
 import {
   filterOwnedListings,
   summarizeOwnedListings,
   type OwnedStatusFilter
 } from '../lib/listingManagement';
-import type { Gig } from '../lib/types';
+import type { EmployerProfile, Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
+import { EmployerAuthPanel } from '../components/EmployerAuthPanel';
 import { Icon } from '../components/Icon';
 
 export function Employer() {
   const { t } = useLang();
-  const { user, phoneNumber, loading: authLoading } = useAuth();
+  const {
+    user,
+    email,
+    emailVerified,
+    phoneNumber,
+    isAnonymous,
+    isEmployer,
+    loading: authLoading,
+    refreshAuth
+  } = useAuth();
   const [gigs, setGigs] = useState<Gig[] | null>(null);
-  const [remaining, setRemaining] = useState<number | null>(null);
+  const [profile, setProfile] = useState<EmployerProfile | null>(null);
+  const [legacyRemaining, setLegacyRemaining] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<OwnedStatusFilter>('all');
   const [reloadTick, setReloadTick] = useState(0);
   const [err, setErr] = useState('');
 
+  // In-app legacy phone -> email linking state
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkEmail, setLinkEmail] = useState('');
+  const [linkPassword, setLinkPassword] = useState('');
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkErr, setLinkErr] = useState('');
+  const [linkSuccess, setLinkSuccess] = useState(false);
+
+  const eligibility = resolveEmployerEligibility(
+    {
+      uid: user?.uid ?? null,
+      email,
+      emailVerified,
+      phoneNumber,
+      isAnonymous
+    },
+    profile
+  );
+
   useEffect(() => {
-    if (!user || !phoneNumber) {
+    if (!user || !isEmployer) {
       setGigs(null);
-      setRemaining(null);
+      setProfile(null);
+      setLegacyRemaining(null);
       setErr('');
       return;
     }
     let cancelled = false;
     setErr('');
-    Promise.all([getMyGigs(user.uid), getRemainingForPhone(phoneNumber)])
-      .then(([items, rem]) => {
+    const tasks: [
+      Promise<Gig[]>,
+      Promise<EmployerProfile | null>,
+      Promise<number | null>
+    ] = [
+      getMyGigs(user.uid),
+      getEmployerProfile(user.uid).catch(() => null),
+      phoneNumber ? getRemainingForPhone(phoneNumber).catch(() => null) : Promise.resolve(null)
+    ];
+
+    Promise.all(tasks)
+      .then(([items, prof, rem]) => {
         if (cancelled) return;
         setGigs(items);
-        setRemaining(rem);
+        setProfile(prof);
+        setLegacyRemaining(rem);
       })
       .catch(() => {
         if (cancelled) return;
         setErr(t('common.error'));
       });
+
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid, phoneNumber, reloadTick]);
+  }, [user?.uid, isEmployer, phoneNumber, reloadTick]);
 
   const summary = summarizeOwnedListings(gigs ?? []);
   const visibleGigs = gigs ? filterOwnedListings(gigs, statusFilter) : null;
+
+  const activeUsed =
+    typeof profile?.activeCount === 'number'
+      ? profile.activeCount
+      : phoneNumber && legacyRemaining !== null
+        ? Math.max(0, MAX_ACTIVE_GIGS - legacyRemaining)
+        : summary.active;
 
   const statusTabs: { id: OwnedStatusFilter; label: string; count: number }[] = [
     { id: 'all', label: t('employer.statusAll'), count: summary.total },
@@ -57,6 +116,36 @@ export function Employer() {
     { id: 'hidden', label: t('employer.statusHidden'), count: summary.hidden },
     { id: 'removed', label: t('employer.statusRemoved'), count: summary.removed }
   ];
+
+  const handleLinkEmail = async () => {
+    if (!user) return;
+    setLinkErr('');
+    setLinkSuccess(false);
+    if (!isValidEmail(linkEmail)) {
+      setLinkErr(t('auth.invalidEmail'));
+      return;
+    }
+    if (validatePassword(linkPassword) !== 'ok') {
+      setLinkErr(t('auth.weakPassword'));
+      return;
+    }
+    setLinkBusy(true);
+    try {
+      await linkEmailToLegacyPhoneAccount(user, linkEmail, linkPassword);
+      setLinkPassword('');
+      setLinkSuccess(true);
+      await refreshAuth();
+    } catch (e) {
+      const code = (e as { code?: string }).code ?? '';
+      setLinkErr(t(mapAuthErrorKey(code)));
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOutEmployer(auth);
+  };
 
   return (
     <div className="page">
@@ -80,33 +169,115 @@ export function Employer() {
           <h2 id="employer-listings-heading" className="section-heading">
             {t('employer.myListingsTitle')}
           </h2>
-          {phoneNumber && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon-only"
-              aria-label={t('common.refresh')}
-              onClick={() => setReloadTick((n) => n + 1)}
-            >
-              <Icon name="refresh" size={16} />
-            </button>
+          {isEmployer && (
+            <div className="employer-head-actions">
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon-only"
+                aria-label={t('common.refresh')}
+                onClick={() => setReloadTick((n) => n + 1)}
+              >
+                <Icon name="refresh" size={16} />
+              </button>
+              <button type="button" className="btn btn-ghost btn-small" onClick={handleSignOut}>
+                {t('employer.signOut')}
+              </button>
+            </div>
           )}
         </div>
 
         {authLoading ? (
           <p className="muted center">{t('common.loading')}</p>
-        ) : !phoneNumber ? (
-          <div className="empty">
-            <Icon name="algeriaEmblem" size={32} />
-            <p>{t('employer.notVerified')}</p>
+        ) : !isEmployer ? (
+          <div className="employer-auth-wrap">
+            <p className="muted">{t('employer.notVerified')}</p>
+            <EmployerAuthPanel />
           </div>
         ) : (
           <>
             <div className="verified-banner">
               <span>✓</span>
-              <span dir="ltr">{phoneNumber}</span>
+              {email && emailVerified ? (
+                <span dir="ltr">{t('employer.emailVerifiedBadge', { email })}</span>
+              ) : phoneNumber ? (
+                <span dir="ltr">
+                  {t('employer.legacyBadge')} ({phoneNumber})
+                </span>
+              ) : null}
             </div>
-            {remaining !== null && (
-              <p className="remaining">{t('post.remaining', { n: MAX_ACTIVE_GIGS - remaining })}</p>
+
+            {eligibility.isSuspended && (
+              <div className="load-more-error" role="alert">
+                <p className="form-error">{t('employer.suspendedNotice')}</p>
+              </div>
+            )}
+
+            <p className="remaining">
+              {t('employer.quotaSummary', { used: activeUsed, max: eligibility.quotaMax })}
+            </p>
+
+            {eligibility.needsEmailLink && (
+              <div className="panel legacy-link-card">
+                <h3>{t('employer.legacyLinkTitle')}</h3>
+                <p className="muted small">{t('employer.legacyLinkText')}</p>
+                {linkSuccess && (
+                  <p className="status-note sample-note" role="status">
+                    {t('employer.legacyLinkSuccess')}
+                  </p>
+                )}
+                {!linkOpen ? (
+                  <button
+                    type="button"
+                    className="btn btn-soft-green"
+                    onClick={() => setLinkOpen(true)}
+                  >
+                    {t('employer.legacyLinkCta')}
+                  </button>
+                ) : (
+                  <form
+                    noValidate
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!linkBusy) void handleLinkEmail();
+                    }}
+                  >
+                    <label className="field">
+                      <span>{t('auth.emailLabel')}</span>
+                      <input
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        dir="ltr"
+                        placeholder={t('auth.emailPlaceholder')}
+                        value={linkEmail}
+                        onChange={(e) => setLinkEmail(e.target.value)}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>{t('auth.passwordLabel')}</span>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder={t('auth.passwordPlaceholder')}
+                        value={linkPassword}
+                        onChange={(e) => setLinkPassword(e.target.value)}
+                      />
+                    </label>
+                    {linkErr && (
+                      <p className="form-error" role="alert">
+                        {linkErr}
+                      </p>
+                    )}
+                    <button
+                      type="submit"
+                      className="btn btn-primary btn-block"
+                      disabled={linkBusy}
+                    >
+                      {linkBusy ? t('common.loading') : t('employer.legacyLinkCta')}
+                    </button>
+                  </form>
+                )}
+              </div>
             )}
 
             {gigs && gigs.length > 0 && (
