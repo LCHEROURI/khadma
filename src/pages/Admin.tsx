@@ -154,7 +154,7 @@ export function Admin() {
     );
   }
 
-  if (!user) {
+  if (!user || user.isAnonymous) {
     return (
       <div className="page">
         <h1 className="page-title">{t('admin.title')}</h1>
@@ -337,25 +337,61 @@ export function Admin() {
         </button>
       </div>
 
-      <div className="tabs">
-        <button className={`tab${tab === 'pending' ? ' active' : ''}`} onClick={() => setTab('pending')}>
+      <div className="tabs" role="tablist" aria-label={t('admin.title')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'pending'}
+          className={`tab${tab === 'pending' ? ' active' : ''}`}
+          onClick={() => setTab('pending')}
+        >
           {t('admin.tabs.pending')}
           {pending && pending.length > 0 ? ` (${pending.length})` : ''}
         </button>
-        <button className={`tab${tab === 'flagged' ? ' active' : ''}`} onClick={() => setTab('flagged')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'flagged'}
+          className={`tab${tab === 'flagged' ? ' active' : ''}`}
+          onClick={() => setTab('flagged')}
+        >
           {t('admin.tabs.flagged')}
           {flagged && flagged.length > 0 ? ` (${flagged.length})` : ''}
         </button>
-        <button className={`tab${tab === 'latest' ? ' active' : ''}`} onClick={() => setTab('latest')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'latest'}
+          className={`tab${tab === 'latest' ? ' active' : ''}`}
+          onClick={() => setTab('latest')}
+        >
           {t('admin.tabs.latest')}
         </button>
-        <button className={`tab${tab === 'employers' ? ' active' : ''}`} onClick={() => setTab('employers')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'employers'}
+          className={`tab${tab === 'employers' ? ' active' : ''}`}
+          onClick={() => setTab('employers')}
+        >
           {t('admin.tabs.employers')}
         </button>
-        <button className={`tab${tab === 'audit' ? ' active' : ''}`} onClick={() => setTab('audit')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'audit'}
+          className={`tab${tab === 'audit' ? ' active' : ''}`}
+          onClick={() => setTab('audit')}
+        >
           {t('admin.tabs.audit')}
         </button>
-        <button className={`tab${tab === 'monitoring' ? ' active' : ''}`} onClick={() => setTab('monitoring')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'monitoring'}
+          className={`tab${tab === 'monitoring' ? ' active' : ''}`}
+          onClick={() => setTab('monitoring')}
+        >
           {t('admin.tabs.monitoring')}
         </button>
       </div>

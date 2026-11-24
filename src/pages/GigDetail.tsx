@@ -28,15 +28,24 @@ export function GigDetail() {
 
   useEffect(() => {
     if (!id) return;
+    let active = true;
+    setMissing(false);
+    setGig(null);
     getGig(id)
       .then((g) => {
+        if (!active) return;
         if (!g) setMissing(true);
         else {
           setGig(g);
           setSaved(isSaved(g.id));
         }
       })
-      .catch(() => setMissing(true));
+      .catch(() => {
+        if (active) setMissing(true);
+      });
+    return () => {
+      active = false;
+    };
   }, [id]);
 
   useEffect(() => {

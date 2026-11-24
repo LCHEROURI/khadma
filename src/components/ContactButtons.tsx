@@ -26,6 +26,8 @@ export function ContactButtons({
   const [copied, setCopied] = useState(false);
   const [showCopyFallback, setShowCopyFallback] = useState(false);
   const inFlightRef = useRef(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     setCachedUrls({});
@@ -38,9 +40,11 @@ export function ContactButtons({
 
   useEffect(() => {
     if (!activeSheet) return;
+    sheetRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setActiveSheet(null);
+        triggerRef.current?.focus();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -54,10 +58,12 @@ export function ContactButtons({
 
   const closeSheet = () => {
     setActiveSheet(null);
+    triggerRef.current?.focus();
   };
 
-  const handleContact = async (channel: ContactMethod) => {
+  const handleContact = async (channel: ContactMethod, triggerEl?: HTMLButtonElement | null) => {
     if (inFlightRef.current || busyChannel !== null) return;
+    if (triggerEl) triggerRef.current = triggerEl;
     setErr('');
     setFailedChannel(null);
     setCopied(false);
@@ -118,7 +124,7 @@ export function ContactButtons({
         <button
           type="button"
           className="btn btn-whatsapp btn-block"
-          onClick={() => void handleContact('whatsapp')}
+          onClick={(e) => void handleContact('whatsapp', e.currentTarget)}
           disabled={busyChannel !== null}
           aria-busy={busyChannel === 'whatsapp'}
         >
@@ -131,7 +137,7 @@ export function ContactButtons({
         <button
           type="button"
           className="btn btn-soft-green btn-block"
-          onClick={() => void handleContact('email')}
+          onClick={(e) => void handleContact('email', e.currentTarget)}
           disabled={busyChannel !== null}
           aria-busy={busyChannel === 'email'}
         >
@@ -165,6 +171,8 @@ export function ContactButtons({
           }}
         >
           <div
+            ref={sheetRef}
+            tabIndex={-1}
             className="contact-sheet"
             role="dialog"
             aria-modal="true"
@@ -205,6 +213,8 @@ export function ContactButtons({
           }}
         >
           <div
+            ref={sheetRef}
+            tabIndex={-1}
             className="contact-sheet"
             role="dialog"
             aria-modal="true"

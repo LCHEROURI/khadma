@@ -386,9 +386,9 @@ export async function adminRemove(gigId: string): Promise<void> {
 }
 
 export async function hasSamples(): Promise<boolean> {
-  const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(1));
+  const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(ADMIN_QUEUE_LIMIT));
   const snap = await getDocs(q);
-  return !snap.empty;
+  return snap.docs.some((d) => d.data().status !== 'removed');
 }
 
 const BATCH_LIMIT = 400;

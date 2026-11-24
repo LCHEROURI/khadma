@@ -293,7 +293,7 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
     });
 
     // Verify Admin Operational Monitoring tab renders all 7 live project-scoped console links + budget thresholds
-    const monitoringTab = page.getByRole('button', { name: /Monitoring/i });
+    const monitoringTab = page.getByRole('tab', { name: /Monitoring/i });
     await monitoringTab.scrollIntoViewIfNeeded({ timeout: 10000 });
     await monitoringTab.click({ timeout: 10000 });
     await expect(page.getByText(/5 \$ \/ 15 \$ \/ 30 \$/i)).toBeVisible({ timeout: 10000 });
@@ -523,7 +523,7 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
     expect(JSON.stringify(approvedContact.body)).toContain('https://wa.me/213553445566');
 
     // 4. Admin opens `Employeurs` tab and suspends the employer via real UI
-    await page.getByRole('button', { name: /^Employeurs$/i }).click();
+    await page.getByRole('tab', { name: /^Employeurs$/i }).click();
     await expect(page.getByText('moderated.emp@oran.dz')).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: /^Suspendre$/i }).click();
     await expect(page.getByText(/^Suspendu$/i)).toBeVisible({ timeout: 15000 });
@@ -582,5 +582,141 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
       lang: 'fr'
     });
     expect(stillHiddenContact.status).toBe(404);
+  });
+
+  test('regression: /auth/action StrictMode verify & reset, settings email sign-out, invalid edit guard, contact sheet focus, bottom nav, report close copy, and admin sample toggle', async ({
+    page
+  }) => {
+    // 1. BottomNav highlights Employer tab on /employer/auth (DEF-006)
+    await page.goto('/employer/auth');
+    await expect(page.locator('.bottom-nav .nav-item.active')).toHaveCount(1);
+
+    // 2. Register employer and verify via real /auth/action?mode=verifyEmail under React StrictMode (DEF-001)
+    await page.locator('input[type="email"]').fill('reg.audit@oran.dz');
+    await page.locator('input[type="password"]').fill('StrongPass!2026');
+    await page.getByRole('button', { name: /Créer mon compte employeur/i }).click();
+    await expect(page.getByText(/Vérifiez votre adresse e-mail/i)).toBeVisible({ timeout: 15000 });
+
+    const oobRes = await fetch(`http://${AUTH_HOST}/emulator/v1/projects/${PROJECT_ID}/oobCodes`);
+    const oobData = (await oobRes.json()) as {
+      oobCodes: Array<{ email: string; oobCode: string; requestType: string }>;
+    };
+    const verifyOob = oobData.oobCodes.filter(
+      (c) => c.email === 'reg.audit@oran.dz' && c.requestType === 'VERIFY_EMAIL'
+    ).pop()!;
+
+    await page.goto(
+      `/auth/action?mode=verifyEmail&oobCode=${encodeURIComponent(verifyOob.oobCode)}&continueUrl=${encodeURIComponent('https://evil.example/phish')}`
+    );
+    await expect(page.getByRole('heading', { name: /adresse e-mail a été confirmée/i })).toBeVisible({
+      timeout: 10000
+    });
+    const returnLink = page.locator('.auth-actions a').first();
+    await expect(returnLink).toHaveAttribute('href', '/employer');
+    await returnLink.click();
+    await expect(page).toHaveURL(/\/employer$/);
+
+    // 3. /auth/action invalid oobCode renders error alert instead of hanging (DEF-001)
+    await page.goto('/auth/action?mode=verifyEmail&oobCode=invalid-code-xyz');
+    await expect(page.locator('.auth-action-body[role="alert"]')).toBeVisible({ timeout: 10000 });
+
+    // 4. Invalid /employer/edit/:id hides edit form and highlights Employer tab (DEF-004, DEF-006)
+    await page.goto('/employer/edit/nonexistent-gig-id');
+    await expect(page.locator('.form-error[role="alert"]')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('form button[type="submit"]')).toHaveCount(0);
+    await expect(page.locator('.bottom-nav .nav-item.active')).toHaveCount(1);
+
+    // 5. /settings shows email account identity and Sign Out for email employers (DEF-003)
+    await page.goto('/settings');
+    await expect(page.getByText(/reg\.audit@oran\.dz/)).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: /Se déconnecter/i }).click();
+    await expect(page.getByText(/reg\.audit@oran\.dz/)).toHaveCount(0, { timeout: 10000 });
+
+    // 6. Password reset via /auth/action?mode=resetPassword works under StrictMode (DEF-001)
+    await page.goto('/employer/auth');
+    await page.getByRole('tab', { name: /Se connecter/i }).click();
+    await page.getByRole('button', { name: /Mot de passe oublié/i }).click();
+    await page.locator('input[type="email"]').fill('reg.audit@oran.dz');
+    await page.locator('form button[type="submit"]').click();
+    await expect(page.locator('[role="status"]')).toBeVisible({ timeout: 10000 });
+
+    const resetOobRes = await fetch(`http://${AUTH_HOST}/emulator/v1/projects/${PROJECT_ID}/oobCodes`);
+    const resetOobData = (await resetOobRes.json()) as {
+      oobCodes: Array<{ email: string; oobCode: string; requestType: string }>;
+    };
+    const resetOob = resetOobData.oobCodes.filter(
+      (c) => c.email === 'reg.audit@oran.dz' && c.requestType === 'PASSWORD_RESET'
+    ).pop()!;
+
+    await page.goto(`/auth/action?mode=resetPassword&oobCode=${encodeURIComponent(resetOob.oobCode)}`);
+    await page.locator('input[type="password"]').fill('NewStrong!2026');
+    await page.locator('form button[type="submit"]').click();
+    await expect(page.getByRole('heading', { name: /Mot de passe mis à jour/i })).toBeVisible({
+      timeout: 10000
+    });
+
+    // 7. Contact sheet moves focus into dialog (DEF-005) & ReportSheet post-submit button says "Fermer" (DEF-007)
+    const empSignIn = await fetch(
+      `http://${AUTH_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'reg.audit@oran.dz', password: 'NewStrong!2026', returnSecureToken: true })
+      }
+    );
+    const { idToken } = (await empSignIn.json()) as { idToken: string };
+    const created = await callCallableDirect(
+      'manageEmployerListing',
+      {
+        action: 'create',
+        title: 'Regression Focus Check',
+        description: 'Vérification focus modal et signalement.',
+        category: 'construction',
+        listingType: 'job',
+        payMin: 3000,
+        payMax: 4000,
+        neighborhood: 'Bir El Djir',
+        city: 'oran',
+        wilayaCode: '31',
+        contactMethods: ['whatsapp'],
+        contactPhone: '0550 12 34 56',
+        whatsappConsent: true
+      },
+      idToken
+    );
+    const createdGigId = (created.body.result as { gigId: string }).gigId;
+    await page.goto(`/gig/${createdGigId}`);
+    await page.getByRole('button', { name: /Contacter sur WhatsApp/i }).click();
+    const waDialog = page.getByRole('dialog');
+    await expect(waDialog).toBeVisible({ timeout: 10000 });
+    const focusInside = await page.evaluate(() => {
+      const d = document.querySelector('[role="dialog"]');
+      return Boolean(d && (d === document.activeElement || d.contains(document.activeElement)));
+    });
+    expect(focusInside).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(waDialog).toBeHidden();
+
+    await page.getByRole('button', { name: /Signaler/i }).click();
+    const reportDialog = page.getByRole('dialog');
+    await reportDialog.locator('.reason-item').first().click();
+    await reportDialog.locator('.btn-danger').click();
+    await expect(reportDialog.getByRole('button', { name: /^Fermer$/i })).toBeVisible({ timeout: 10000 });
+    await reportDialog.getByRole('button', { name: /^Fermer$/i }).click();
+
+    // 8. Admin Seed & Remove samples resets toggle back to Seed (DEF-002) and exposes role="tablist" (DEF-007)
+    await createVerifiedAuthUser(ADMIN_EMAIL, 'AdminStrong!2026');
+    await page.goto('/admin');
+    await page.locator('input[type="email"]').fill(ADMIN_EMAIL);
+    await page.locator('input[type="password"]').fill('AdminStrong!2026');
+    await page.getByRole('button', { name: /Se connecter/i }).click();
+    await expect(page.locator('.tabs[role="tablist"]')).toBeVisible({ timeout: 15000 });
+
+    await page.getByRole('button', { name: /Ajouter 10 annonces d’exemple/i }).click();
+    await expect(page.getByRole('button', { name: /Retirer tous les exemples/i })).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: /Retirer tous les exemples/i }).click();
+    await expect(page.getByRole('button', { name: /Ajouter 10 annonces d’exemple/i })).toBeVisible({
+      timeout: 15000
+    });
   });
 });

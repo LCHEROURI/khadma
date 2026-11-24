@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
@@ -49,6 +49,7 @@ export function PostGig({
 
   const [profile, setProfile] = useState<EmployerProfile | null>(null);
   const [loadingEdit, setLoadingEdit] = useState(isEditMode);
+  const [editLoadError, setEditLoadError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const idempotencyKeyRef = useRef(createIdempotencyKey());
@@ -96,14 +97,18 @@ export function PostGig({
   useEffect(() => {
     if (!editGigId || !user || !isEmployer) {
       setLoadingEdit(false);
+      setEditLoadError(false);
       return;
     }
     let cancelled = false;
     setLoadingEdit(true);
+    setEditLoadError(false);
+    setErr('');
     getGig(editGigId)
       .then((g) => {
         if (cancelled) return;
         if (!g || g.posterUid !== user.uid) {
+          setEditLoadError(true);
           setErr(t('common.error'));
           setLoadingEdit(false);
           return;
@@ -121,6 +126,7 @@ export function PostGig({
       })
       .catch(() => {
         if (!cancelled) {
+          setEditLoadError(true);
           setErr(t('common.error'));
           setLoadingEdit(false);
         }
@@ -285,6 +291,17 @@ export function PostGig({
         ) : (
           <EmployerAuthPanel />
         )
+      ) : isEditMode && editLoadError ? (
+        <div className="panel">
+          <p className="form-error" role="alert">
+            {err || t('common.error')}
+          </p>
+          <div className="center">
+            <Link to="/employer" className="btn btn-primary">
+              {t('post.goToDashboard')}
+            </Link>
+          </div>
+        </div>
       ) : (
         <form
           className="panel"

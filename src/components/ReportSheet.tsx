@@ -78,15 +78,15 @@ export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => 
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
             </div>
             <p>{t('gig.reportThanks')}</p>
-            <button className="btn btn-primary" onClick={onClose}>
-              {t('report.cancel')}
+            <button type="button" className="btn btn-primary" onClick={onClose}>
+              {t('common.close')}
             </button>
           </div>
         ) : already ? (
           <div className="sheet-done">
             <p>{t('report.alreadyReported')}</p>
-            <button className="btn btn-primary" onClick={onClose}>
-              {t('report.cancel')}
+            <button type="button" className="btn btn-primary" onClick={onClose}>
+              {t('common.close')}
             </button>
           </div>
         ) : (
@@ -96,7 +96,9 @@ export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => 
               {REPORT_REASONS.map((r) => (
                 <button
                   key={r}
+                  type="button"
                   className={`reason-item${reason === r ? ' selected' : ''}`}
+                  aria-pressed={reason === r}
                   onClick={() => setReason(r)}
                 >
                   {t(`report.reasons.${r}`)}
@@ -105,10 +107,10 @@ export function ReportSheet({ gigId, onClose }: { gigId: string; onClose: () => 
             </div>
             {err && <p className="form-error">{err}</p>}
             <div className="sheet-actions">
-              <button className="btn btn-ghost" onClick={onClose} disabled={busy}>
+              <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
                 {t('report.cancel')}
               </button>
-              <button className="btn btn-danger" onClick={submit} disabled={!reason || busy}>
+              <button type="button" className="btn btn-danger" onClick={submit} disabled={!reason || busy}>
                 {busy ? t('common.loading') : t('report.submit')}
               </button>
             </div>

@@ -15,9 +15,10 @@ import { Icon } from '../components/Icon';
 
 export function Settings() {
   const { t, lang, setLang } = useLang();
-  const { phoneNumber: phone } = useAuth();
+  const { user, email, phoneNumber: phone, isAnonymous } = useAuth();
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(() => getDeferredInstallPrompt());
   const [installed, setInstalled] = useState(false);
+  const isSignedInAccount = Boolean(user && !isAnonymous && (email || phone));
 
   useEffect(() => {
     setDeferred(getDeferredInstallPrompt());
@@ -64,10 +65,17 @@ export function Settings() {
         </section>
       )}
 
-      {phone && (
+      {isSignedInAccount && (
         <section className="settings-section">
-          <p className="muted">{t('post.verifiedAs', { phone })}</p>
+          <p className="muted" dir="ltr">
+            {email
+              ? t('employer.emailVerifiedBadge', { email })
+              : phone
+                ? t('post.verifiedAs', { phone })
+                : ''}
+          </p>
           <button
+            type="button"
             className="btn btn-ghost wide"
             onClick={async () => {
               await signOut(auth);

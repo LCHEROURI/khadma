@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { applyActionCode, confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
 import { auth } from '../firebase';
@@ -18,6 +18,56 @@ type ActionStatus =
   | 'reset_success'
   | 'error';
 
+type ActionOutcome =
+  | { status: 'verify_success' }
+  | { status: 'reset_form' }
+  | { status: 'error'; errorKey: string };
+
+// Deduplicate one-time Firebase oobCode verification across React 18 StrictMode remounts
+// without dropping state updates when the first effect invocation cleans up.
+const actionOutcomeCache = new Map<string, Promise<ActionOutcome>>();
+
+function executeAuthActionOnce(
+  mode: 'verifyEmail' | 'resetPassword',
+  oobCode: string
+): Promise<ActionOutcome> {
+  const cacheKey = `${mode}:${oobCode}`;
+  const existing = actionOutcomeCache.get(cacheKey);
+  if (existing) return existing;
+
+  // Keep cache bounded for long-lived SPA sessions.
+  if (actionOutcomeCache.size >= 20) {
+    const oldestKey = actionOutcomeCache.keys().next().value;
+    if (oldestKey) actionOutcomeCache.delete(oldestKey);
+  }
+
+  const promise: Promise<ActionOutcome> =
+    mode === 'verifyEmail'
+      ? applyActionCode(auth, oobCode)
+          .then(async () => {
+            // Reload authenticated user & refresh ID token so emailVerified claim updates immediately.
+            const current = auth.currentUser;
+            if (current) {
+              await current.reload();
+              await current.getIdToken(true);
+            }
+            return { status: 'verify_success' as const };
+          })
+          .catch((err) => {
+            const code = (err as { code?: string }).code ?? '';
+            return { status: 'error' as const, errorKey: mapActionCodeErrorKey(code) };
+          })
+      : verifyPasswordResetCode(auth, oobCode)
+          .then(() => ({ status: 'reset_form' as const }))
+          .catch((err) => {
+            const code = (err as { code?: string }).code ?? '';
+            return { status: 'error' as const, errorKey: mapActionCodeErrorKey(code) };
+          });
+
+  actionOutcomeCache.set(cacheKey, promise);
+  return promise;
+}
+
 export function AuthAction() {
   const { search } = useLocation();
   const { t, setLang } = useLang();
@@ -33,7 +83,6 @@ export function AuthAction() {
   const [newPassword, setNewPassword] = useState('');
   const [resetSubmitting, setResetSubmitting] = useState(false);
   const [resetFormErr, setResetFormErr] = useState('');
-  const executedKeyRef = useRef<string>('');
 
   useEffect(() => {
     if (parsed.lang) {
@@ -42,9 +91,8 @@ export function AuthAction() {
   }, [parsed.lang, setLang]);
 
   useEffect(() => {
-    const runKey = `${parsed.mode}:${parsed.oobCode ? 'present' : 'missing'}`;
-    if (executedKeyRef.current === runKey) return;
-    executedKeyRef.current = runKey;
+    setResetFormErr('');
+    setErrorKey('');
 
     if (!parsed.mode || (parsed.mode !== 'verifyEmail' && parsed.mode !== 'resetPassword')) {
       setErrorKey('authAction.errorUnsupported');
@@ -59,38 +107,17 @@ export function AuthAction() {
     }
 
     let active = true;
+    setStatus('loading');
 
-    if (parsed.mode === 'verifyEmail') {
-      applyActionCode(auth, parsed.oobCode)
-        .then(async () => {
-          // Reload authenticated user & refresh ID token so emailVerified claim updates immediately.
-          const current = auth.currentUser;
-          if (current) {
-            await current.reload();
-            await current.getIdToken(true);
-          }
-          if (active) {
-            setStatus('verify_success');
-          }
-        })
-        .catch((err) => {
-          if (!active) return;
-          const code = (err as { code?: string }).code ?? '';
-          setErrorKey(mapActionCodeErrorKey(code));
-          setStatus('error');
-        });
-    } else {
-      verifyPasswordResetCode(auth, parsed.oobCode)
-        .then(() => {
-          if (active) setStatus('reset_form');
-        })
-        .catch((err) => {
-          if (!active) return;
-          const code = (err as { code?: string }).code ?? '';
-          setErrorKey(mapActionCodeErrorKey(code));
-          setStatus('error');
-        });
-    }
+    void executeAuthActionOnce(parsed.mode, parsed.oobCode).then((outcome) => {
+      if (!active) return;
+      if (outcome.status === 'error') {
+        setErrorKey(outcome.errorKey);
+        setStatus('error');
+      } else {
+        setStatus(outcome.status);
+      }
+    });
 
     return () => {
       active = false;

@@ -171,6 +171,7 @@ export const LEGACY_DARIA_STRINGS: Dict = {
   'common.refresh': 'Actualisi',
   'common.error': 'Sar mochkil. 3awed jarreb.',
   'common.retry': '3awed',
+  'common.close': 'Ghelleq',
   'common.loadError': 'Ma t9ednach njibou el data. Checki l’internet.',
   'wa.message': 'Salam 👋 Choftek 3la KHADMA, 7abbit nse9sik 3la li3lan.'
 };
@@ -519,6 +520,7 @@ const fr: Dict = {
   'common.refresh': 'Actualiser',
   'common.error': 'Une erreur est survenue. Réessayez.',
   'common.retry': 'Réessayer',
+  'common.close': 'Fermer',
   'common.loadError': 'Impossible de charger les données. Vérifiez la connexion.',
   'wa.message': 'Bonjour 👋 Je vous contacte via KHADMA au sujet de votre annonce.'
 };
@@ -862,6 +864,7 @@ const ar: Dict = {
   'common.refresh': 'تحديث',
   'common.error': 'حدث خطأ. حاول مجدداً.',
   'common.retry': 'إعادة المحاولة',
+  'common.close': 'إغلاق',
   'common.loadError': 'تعذر تحميل البيانات. تحقق من الاتصال.',
   'wa.message': 'السلام عليكم 👋 أتواصل معك عبر خدامة بخصوص إعلانك.'
 };

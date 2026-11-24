@@ -61,17 +61,17 @@ test.describe('KHADMA V1.2 critical mobile user journeys', () => {
     await page.getByRole('link', { name: 'Publier une offre d’emploi' }).click();
     await expect(page).toHaveURL(/\/employer\/post$/);
     await expect(page.locator('.locked-type-row')).toHaveText('Offre d’emploi');
-    await expect(page.locator('.type-switcher')).toHaveCount(0);
+    await expect(page.locator('.type-switcher[role="group"]')).toHaveCount(0);
 
     await page.goto('/services');
     await expect(page.getByRole('heading', { name: 'Services et prestataires' })).toBeVisible();
     await page.goto('/services/post');
     await expect(page.locator('.locked-type-row')).toHaveText('Service');
-    await expect(page.locator('.type-switcher')).toHaveCount(0);
+    await expect(page.locator('.type-switcher[role="group"]')).toHaveCount(0);
 
     await page.goto('/post');
-    await expect(page.locator('.type-switcher')).toBeVisible();
-    await expect(page.locator('.type-pill.active')).toHaveText('Offre d’emploi');
+    await expect(page.locator('.type-switcher[role="group"]')).toBeVisible();
+    await expect(page.locator('.type-switcher[role="group"] .type-pill.active')).toHaveText('Offre d’emploi');
 
     await page.goto('/listings');
     await expect(page.getByRole('heading', { name: 'Toutes les annonces' })).toBeVisible();
