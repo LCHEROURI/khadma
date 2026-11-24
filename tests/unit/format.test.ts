@@ -1,14 +1,49 @@
 import { describe, expect, it } from 'vitest';
-import { errKey, formatListingCount, formatNeighborhood, formatPay } from '../../src/lib/format';
+import {
+  errKey,
+  extractQuotaMaxFromError,
+  formatListingCount,
+  formatNeighborhood,
+  formatPay
+} from '../../src/lib/format';
 import { STRINGS, tpl } from '../../src/lib/strings';
 
 describe('formatPay', () => {
-  it('formats single value and ranges with localized currency', () => {
+  it('formats single value and ranges with localized currency and BiDi LRI/PDI isolation', () => {
     expect(formatPay(2000, 2000)).toContain('2');
     expect(formatPay(2000, 2000)).toContain('DZD');
     expect(formatPay(2000, 3500)).toContain('–');
     expect(formatPay(2500, 2500, 'دج')).toContain('دج');
-    expect(formatPay(2500, 3500, 'دج')).toContain('دج');
+    const arRange = formatPay(3000, 4500, 'دج');
+    expect(arRange).toContain('دج');
+    // Must wrap numerical range in LRI (U+2066) ... PDI (U+2069) so RTL never reverses min–max
+    expect(arRange.startsWith('\u2066')).toBe(true);
+    expect(arRange).toContain('\u2069 دج');
+    const inner = arRange.slice(1, arRange.indexOf('\u2069'));
+    const [lo, hi] = inner.split('–');
+    expect(lo).toContain('3');
+    expect(hi).toContain('4');
+  });
+});
+
+describe('extractQuotaMaxFromError & dynamic post.rateLimit', () => {
+  it('extracts authoritative quota from structured details, message fallback, or client fallback', () => {
+    expect(extractQuotaMaxFromError({ details: { quotaMax: 3 } }, 5)).toBe(3);
+    expect(extractQuotaMaxFromError({ details: { quotaMax: 5 } }, 3)).toBe(5);
+    expect(extractQuotaMaxFromError({ details: { quotaMax: 12 } }, 3)).toBe(12);
+    expect(extractQuotaMaxFromError({ message: 'Advertisement quota reached (7).' }, 3)).toBe(7);
+    expect(extractQuotaMaxFromError(new Error('unknown'), 3)).toBe(3);
+  });
+
+  it('renders dynamic FR and AR quota error messages without hardcoded 5 or phone copy', () => {
+    for (const max of [3, 5, 8]) {
+      const frMsg = tpl(STRINGS.fr['post.rateLimit'], { max });
+      const arMsg = tpl(STRINGS.ar['post.rateLimit'], { max });
+      expect(frMsg).toContain(String(max));
+      expect(frMsg.toLowerCase()).not.toContain('par numéro');
+      expect(arMsg).toContain(String(max));
+      expect(arMsg).not.toContain('لكل رقم');
+    }
   });
 });
 

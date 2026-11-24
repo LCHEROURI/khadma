@@ -42,7 +42,8 @@ export type ListingErrorCode =
 export class ListingHandlerError extends Error {
   constructor(
     public readonly code: ListingErrorCode,
-    message: string
+    message: string,
+    public readonly details?: Record<string, unknown>
   ) {
     super(message);
   }
@@ -614,7 +615,8 @@ export async function handleManageEmployerListing(
       if (actualActiveOrPending >= synced.maxActiveGigs) {
         throw new ListingHandlerError(
           'resource-exhausted',
-          `Advertisement quota reached (${synced.maxActiveGigs}).`
+          `Advertisement quota reached (${synced.maxActiveGigs}).`,
+          { quotaMax: synced.maxActiveGigs, quotaUsed: synced.activeCount }
         );
       }
 
@@ -930,7 +932,8 @@ export async function handleManageEmployerListing(
     if (actualActiveOrPending >= synced.maxActiveGigs) {
       throw new ListingHandlerError(
         'resource-exhausted',
-        `Advertisement quota reached (${synced.maxActiveGigs}).`
+        `Advertisement quota reached (${synced.maxActiveGigs}).`,
+        { quotaMax: synced.maxActiveGigs, quotaUsed: actualActiveOrPending }
       );
     }
 

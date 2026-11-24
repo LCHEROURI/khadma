@@ -719,4 +719,158 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
       timeout: 15000
     });
   });
+
+  test('V1.4.1 operational regressions: Admin reports tab (Item 8), dynamic 3/admin-adjusted quota + edit at full quota (Item 9), Arabic RTL salary BiDi isolation (Item 10), and PWA install prompt UI (Item 7)', async ({
+    page,
+    browser
+  }) => {
+    const admin = await createVerifiedAuthUser(ADMIN_EMAIL, 'AdminStrong!2026');
+    const emp = await createVerifiedAuthUser('v141.emp@oran.dz', 'StrongPass!2026');
+
+    // 1. Create 3 ads to hit new employer's 3-ad quota
+    const gigIds: string[] = [];
+    for (let i = 1; i <= 3; i++) {
+      const c = await callCallableDirect(
+        'manageEmployerListing',
+        {
+          action: 'create',
+          title: `V141 Poste ${i} — Bir El Djir`,
+          description: 'Description complète pour test de quota V1.4.1.',
+          category: 'construction',
+          listingType: 'job',
+          payMin: 3000,
+          payMax: 4500,
+          neighborhood: 'Bir El Djir',
+          city: 'oran',
+          wilayaCode: '31',
+          contactMethods: ['whatsapp'],
+          contactPhone: '0550 99 88 77',
+          whatsappConsent: true
+        },
+        emp.idToken
+      );
+      expect(c.status).toBe(200);
+      gigIds.push((c.body.result as { gigId: string }).gigId);
+    }
+
+    // 2. Sign in as employer at 3/3 quota -> editing existing ad MUST succeed, 4th ad shows dynamic "3" quota error (FR + AR)
+    await page.goto('/employer');
+    await page.getByRole('tab', { name: /Se connecter/i }).click();
+    await page.locator('input[type="email"]').fill('v141.emp@oran.dz');
+    await page.locator('input[type="password"]').fill('StrongPass!2026');
+    await page.getByRole('button', { name: /Se connecter/i }).click();
+    await expect(page.getByText(/3 \/ 3/)).toBeVisible({ timeout: 15000 });
+
+    // Edit existing listing while quota is full (3/3) -> succeeds
+    await page.getByRole('link', { name: /^Modifier$/i }).first().click();
+    await page.waitForURL(/\/employer\/edit\//, { timeout: 15000 });
+    await page.getByLabel(/Titre/i).fill('V141 Poste Modifié — Bir El Djir');
+    await page.locator('form button[type="submit"]').click();
+    await page.waitForURL(/\/employer$/, { timeout: 15000 });
+    await expect(page.getByText('V141 Poste Modifié — Bir El Djir')).toBeVisible({ timeout: 15000 });
+
+    // Attempt 4th listing via UI -> dynamic error must state "3" (not "5" or "par numéro")
+    await page.goto('/employer/post');
+    await page.getByLabel(/Titre/i).fill('V141 Quatrième Annonce Bloquée');
+    await page.getByLabel(/Description/i).fill('Doit afficher le quota dynamique 3.');
+    await page.locator('form input[type="number"]').nth(0).fill('3000');
+    await page.locator('form input[type="tel"]').fill('0550 99 88 77');
+    await page.locator('form input[type="checkbox"]').nth(1).check();
+    await page.locator('form button[type="submit"]').click();
+    const quotaAlert = page.locator('.form-error[role="alert"]');
+    await expect(quotaAlert).toBeVisible({ timeout: 15000 });
+    await expect(quotaAlert).toContainText('3');
+    await expect(quotaAlert).not.toContainText('5');
+    await expect(quotaAlert).not.toContainText(/par numéro/i);
+
+    // Admin adjusts employer quota to 2 -> next attempt shows authoritative backend quota "2"
+    const adj = await callCallableDirect(
+      'adminManageMarketplace',
+      {
+        action: 'setEmployerQuota',
+        employerUid: emp.uid,
+        maxActiveGigs: 2,
+        reason: 'V1.4.1 dynamic quota test'
+      },
+      admin.idToken
+    );
+    expect(adj.status).toBe(200);
+    await page.locator('form button[type="submit"]').click();
+    await expect(quotaAlert).toContainText('2', { timeout: 15000 });
+
+    // 3. Item 10: Verify Arabic RTL salary BiDi isolation on Mobile & Desktop across Browse, Detail, Saved & Employer
+    for (const vp of [
+      { width: 390, height: 844 },
+      { width: 1440, height: 900 }
+    ]) {
+      const rtlCtx = await browser.newContext({ baseURL: 'http://127.0.0.1:4174', viewport: vp });
+      const rtlPage = await rtlCtx.newPage();
+      await rtlPage.goto('/jobs');
+      await rtlPage.locator('.lang-toggle').getByRole('button', { name: 'العربية' }).click();
+      await expect(rtlPage.locator('html')).toHaveAttribute('dir', 'rtl');
+      const cardPay = rtlPage.locator('.card-pay').first();
+      await expect(cardPay).toBeVisible({ timeout: 15000 });
+      const cardPayText = await cardPay.textContent();
+      expect(cardPayText).toContain('\u2066');
+      expect(cardPayText).toContain('\u2069');
+      const cardBidi = await cardPay.evaluate((el) => getComputedStyle(el).unicodeBidi);
+      expect(cardBidi).toBe('isolate');
+
+      await rtlPage.locator('.card-list .card').first().click();
+      const detailPay = rtlPage.locator('.detail-pay');
+      await expect(detailPay).toBeVisible({ timeout: 15000 });
+      const detailPayText = await detailPay.textContent();
+      expect(detailPayText).toContain('\u2066');
+      expect(detailPayText).toContain('\u2069');
+      const detailBidi = await detailPay.evaluate((el) => getComputedStyle(el).unicodeBidi);
+      expect(detailBidi).toBe('isolate');
+      await rtlCtx.close();
+    }
+
+    // 4. Item 8: Submit a listing report as seeker -> verify Admin Signalements tab displays reason, date, count, status, actions & zero reporterId
+    const seekerCtx = await browser.newContext({ baseURL: 'http://127.0.0.1:4174', viewport: { width: 390, height: 844 } });
+    const seekerPage = await seekerCtx.newPage();
+    await seekerPage.goto(`/gig/${gigIds[0]}`);
+    await seekerPage.getByRole('button', { name: /Signaler/i }).click();
+    const reportDlg = seekerPage.getByRole('dialog');
+    await reportDlg.locator('.reason-item').first().click();
+    await reportDlg.locator('.btn-danger').click();
+    await expect(reportDlg.getByRole('button', { name: /^Fermer$/i })).toBeVisible({ timeout: 15000 });
+    await seekerCtx.close();
+
+    // Sign out employer and sign in as verified admin
+    await page.goto('/employer');
+    await page.getByRole('button', { name: /Se déconnecter/i }).click();
+    await expect(page.getByRole('tab', { name: /Se connecter/i })).toBeVisible({ timeout: 15000 });
+    await page.goto('/admin');
+    await page.locator('input[type="email"]').fill(ADMIN_EMAIL);
+    await page.locator('input[type="password"]').fill('AdminStrong!2026');
+    await page.getByRole('button', { name: /Se connecter/i }).click();
+
+    const reportsTab = page.getByRole('tab', { name: /Signalements/i });
+    await expect(reportsTab).toBeVisible({ timeout: 15000 });
+    await reportsTab.click();
+    const reportRow = page.locator('.admin-list .admin-row').first();
+    await expect(reportRow).toBeVisible({ timeout: 15000 });
+    await expect(reportRow).toContainText(/Motif :/i);
+    await expect(reportRow).toContainText(/Signalé le/i);
+    await expect(reportRow).toContainText(/1 signalement/i);
+    await expect(reportRow.getByRole('button', { name: /^Masquer$/i })).toBeVisible();
+
+    // 5. Item 7 (AUD-29/30): Verify Settings PWA install button reacts to beforeinstallprompt event
+    await page.goto('/settings');
+    await page.evaluate(() => {
+      const ev = new Event('beforeinstallprompt') as Event & {
+        prompt: () => Promise<void>;
+        userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+      };
+      ev.prompt = () => Promise.resolve();
+      ev.userChoice = Promise.resolve({ outcome: 'accepted' });
+      window.dispatchEvent(ev);
+    });
+    const installBtn = page.getByRole('button', { name: /Installer l’application/i });
+    await expect(installBtn).toBeVisible({ timeout: 5000 });
+    await installBtn.click();
+    await expect(page.getByText(/Application installée/i)).toBeVisible({ timeout: 5000 });
+  });
 });

@@ -17,6 +17,7 @@ import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, ensureAppCheckInitialized, functions } from '../firebase';
 import type {
+  AdminReportItem,
   AuditLogEntry,
   ContactMethod,
   EmployerProfile,
@@ -27,7 +28,12 @@ import type {
   ReportReason
 } from './types';
 import { isSafeContactUrl } from './contactLink';
-import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
+import {
+  ADMIN_QUEUE_LIMIT,
+  ADMIN_REPORTS_PAGE_SIZE,
+  BROWSE_PAGE_SIZE,
+  MAX_ACTIVE_GIGS
+} from './constants';
 import { buildBrowseCacheKey, publicBrowseCache } from './browseCache';
 import { SAMPLE_GIGS } from './samples';
 import { readStringList, writeStringList } from './storage';
@@ -335,6 +341,66 @@ export async function getAdminQueue(): Promise<{ latest: Gig[]; flagged: Gig[] }
   const flagged = fs.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
   const latest = ls.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
   return { latest, flagged };
+}
+
+export interface AdminReportsPage {
+  items: AdminReportItem[];
+  lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+  hasMore: boolean;
+}
+
+export async function getAdminReportsPage(
+  after: QueryDocumentSnapshot<DocumentData> | null = null,
+  pageSize = ADMIN_REPORTS_PAGE_SIZE
+): Promise<AdminReportsPage> {
+  const bounded = Math.max(1, Math.min(ADMIN_REPORTS_PAGE_SIZE, pageSize));
+  const q = after
+    ? query(
+        collection(db, 'reports'),
+        orderBy('createdAt', 'desc'),
+        startAfter(after),
+        limit(bounded + 1)
+      )
+    : query(collection(db, 'reports'), orderBy('createdAt', 'desc'), limit(bounded + 1));
+
+  const snap = await getDocs(q);
+  const hasMore = snap.docs.length > bounded;
+  const pageDocs = hasMore ? snap.docs.slice(0, bounded) : snap.docs;
+  const lastDoc = pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : null;
+
+  const uniqueGigIds = Array.from(
+    new Set(
+      pageDocs
+        .map((d) => d.data().gigId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+    )
+  );
+  const gigsList = uniqueGigIds.length > 0 ? await getGigsByIds(uniqueGigIds) : [];
+  const gigMap = new Map<string, Gig>(gigsList.map((g) => [g.id, g]));
+
+  // Intentionally omit reporterId from AdminReportItem to avoid unnecessary identity disclosure.
+  const items: AdminReportItem[] = pageDocs.map((d) => {
+    const data = d.data();
+    const gigId = typeof data.gigId === 'string' ? data.gigId : '';
+    const reason = (typeof data.reason === 'string' ? data.reason : 'other') as ReportReason;
+    const rawTs = data.createdAt as { seconds?: unknown; nanoseconds?: unknown } | null | undefined;
+    const createdAt =
+      rawTs && typeof rawTs === 'object' && typeof rawTs.seconds === 'number'
+        ? {
+            seconds: rawTs.seconds,
+            nanoseconds: typeof rawTs.nanoseconds === 'number' ? rawTs.nanoseconds : 0
+          }
+        : null;
+    return {
+      id: d.id,
+      gigId,
+      reason,
+      createdAt,
+      gig: gigMap.get(gigId) ?? null
+    };
+  });
+
+  return { items, lastDoc, hasMore };
 }
 
 export async function adminApprove(gigId: string): Promise<void> {

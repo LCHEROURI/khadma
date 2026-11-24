@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { sendEmailVerification, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { app, auth } from '../firebase';
 import { useAuth } from '../hooks/useAuth';
 import { useLang } from '../lib/i18n';
@@ -11,6 +13,7 @@ import {
   getAdminEmployers,
   getAdminPendingGigs,
   getAdminQueue,
+  getAdminReportsPage,
   getMarketplaceModerationSettings,
   hasSamples,
   removeAllSamples,
@@ -18,6 +21,7 @@ import {
 } from '../lib/db';
 import { formatNeighborhood, formatPay } from '../lib/format';
 import type {
+  AdminReportItem,
   AuditLogEntry,
   EmployerProfile,
   Gig,
@@ -58,10 +62,10 @@ const MONITORING_CONSOLE_LINKS = [
   }
 ] as const;
 
-type AdminTab = 'pending' | 'flagged' | 'latest' | 'employers' | 'audit' | 'monitoring';
+type AdminTab = 'pending' | 'flagged' | 'reports' | 'latest' | 'employers' | 'audit' | 'monitoring';
 
 export function Admin() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const { user, loading: authLoading, isAdmin } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -71,6 +75,10 @@ export function Admin() {
   const [latest, setLatest] = useState<Gig[] | null>(null);
   const [flagged, setFlagged] = useState<Gig[] | null>(null);
   const [pending, setPending] = useState<Gig[] | null>(null);
+  const [reports, setReports] = useState<AdminReportItem[] | null>(null);
+  const [reportsCursor, setReportsCursor] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [reportsHasMore, setReportsHasMore] = useState(false);
+  const [reportsLoadingMore, setReportsLoadingMore] = useState(false);
   const [employers, setEmployers] = useState<EmployerProfile[] | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[] | null>(null);
   const [modSettings, setModSettings] = useState<MarketplaceModerationSettings | null>(null);
@@ -84,16 +92,47 @@ export function Admin() {
   const controllerRef = useRef<AdminQueueController | null>(null);
 
   const loadPhase4AdminData = async () => {
-    const [pGigs, emps, logs, settings] = await Promise.all([
+    const [pGigs, repPage, emps, logs, settings] = await Promise.all([
       getAdminPendingGigs().catch(() => []),
+      getAdminReportsPage(null).catch(() => ({ items: [], lastDoc: null, hasMore: false })),
       getAdminEmployers().catch(() => []),
       getAdminAuditLogs().catch(() => []),
       getMarketplaceModerationSettings().catch(() => null)
     ]);
     setPending(pGigs);
+    setReports(repPage.items);
+    setReportsCursor(repPage.lastDoc);
+    setReportsHasMore(repPage.hasMore);
     setEmployers(emps);
     setAuditLogs(logs);
     setModSettings(settings);
+  };
+
+  const loadMoreReports = async () => {
+    if (reportsLoadingMore || !reportsHasMore || !reportsCursor) return;
+    setReportsLoadingMore(true);
+    try {
+      const nextPage = await getAdminReportsPage(reportsCursor);
+      setReports((prev) => [...(prev ?? []), ...nextPage.items]);
+      setReportsCursor(nextPage.lastDoc);
+      setReportsHasMore(nextPage.hasMore);
+    } catch {
+      setNotice(t('common.error'));
+    } finally {
+      setReportsLoadingMore(false);
+    }
+  };
+
+  const formatReportDate = (ts: { seconds: number } | null): string => {
+    if (!ts || !ts.seconds) return '';
+    try {
+      return new Intl.DateTimeFormat(lang === 'ar' ? 'ar-DZ' : 'fr-FR', {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+      }).format(new Date(ts.seconds * 1000));
+    } catch {
+      return new Date(ts.seconds * 1000).toISOString().slice(0, 16).replace('T', ' ');
+    }
   };
 
   useEffect(() => {
@@ -361,6 +400,16 @@ export function Admin() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === 'reports'}
+          className={`tab${tab === 'reports' ? ' active' : ''}`}
+          onClick={() => setTab('reports')}
+        >
+          {t('admin.tabs.reports')}
+          {reports && reports.length > 0 ? ` (${reports.length}${reportsHasMore ? '+' : ''})` : ''}
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === 'latest'}
           className={`tab${tab === 'latest' ? ' active' : ''}`}
           onClick={() => setTab('latest')}
@@ -455,6 +504,124 @@ export function Admin() {
             <p className="small">{t('admin.monitoring.budgetThresholdsNote')}</p>
           </div>
         </section>
+      ) : tab === 'reports' ? (
+        reports === null ? (
+          <p className="muted center">{t('common.loading')}</p>
+        ) : reports.length === 0 ? (
+          <div className="empty">
+            <p>{t('admin.empty')}</p>
+          </div>
+        ) : (
+          <>
+            <div className="admin-list">
+              {reports.map((rep) => {
+                const g = rep.gig;
+                const dateLabel = formatReportDate(rep.createdAt);
+                return (
+                  <div
+                    key={rep.id}
+                    className={`admin-row${g && g.status !== 'active' ? ' muted-row' : ''}`}
+                  >
+                    <div className="admin-row-main">
+                      <div className="admin-row-title">
+                        {g ? (
+                          <Link to={`/gig/${g.id}`}>{g.title}</Link>
+                        ) : (
+                          t('admin.reports.missingGig', { id: rep.gigId })
+                        )}
+                      </div>
+                      <div className="admin-row-meta">
+                        <span className="flag-chip">
+                          {t('admin.reports.reasonPrefix', {
+                            reason: t(`report.reasons.${rep.reason}`)
+                          })}
+                        </span>
+                        {dateLabel && (
+                          <span className="muted small">
+                            {t('admin.reports.submittedAt', { date: dateLabel })}
+                          </span>
+                        )}
+                        {g && (
+                          <>
+                            <span className="chip">{t(`categories.${g.category}`)}</span>
+                            <span className="chip chip-neigh">
+                              {formatNeighborhood(g.neighborhood, t)}
+                            </span>
+                            <span className="pay-value" dir="ltr">
+                              {formatPay(g.payMin, g.payMax, t('common.currency'))}
+                            </span>
+                            <span className="status-chip">{t(`admin.status.${g.status}`)}</span>
+                            <span className="flag-chip">🚩 {t('admin.flags', { n: g.flags })}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {g && (
+                      <div className="admin-row-actions">
+                        {g.status === 'pending' && (
+                          <button
+                            type="button"
+                            className="btn btn-small btn-approve"
+                            disabled={busy}
+                            onClick={() =>
+                              void runServerAdminAction({ action: 'approveGig', gigId: g.id })
+                            }
+                          >
+                            {t('admin.approve')}
+                          </button>
+                        )}
+                        {(g.status === 'hidden' || g.status === 'removed') && (
+                          <button
+                            type="button"
+                            className="btn btn-small btn-approve"
+                            disabled={busy}
+                            onClick={() =>
+                              void runServerAdminAction({ action: 'restoreGig', gigId: g.id })
+                            }
+                          >
+                            {t('admin.restore')}
+                          </button>
+                        )}
+                        {g.status === 'active' && (
+                          <button
+                            type="button"
+                            className="btn btn-small btn-ghost"
+                            disabled={busy}
+                            onClick={() => void actWithReason('hideGig', { gigId: g.id })}
+                          >
+                            {t('admin.hide')}
+                          </button>
+                        )}
+                        {g.status !== 'removed' && (
+                          <button
+                            type="button"
+                            className="btn btn-small btn-danger"
+                            disabled={busy}
+                            onClick={() => void actWithReason('removeGig', { gigId: g.id })}
+                          >
+                            {t('admin.remove')}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {reportsHasMore && (
+              <div className="center load-more">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={reportsLoadingMore}
+                  onClick={() => void loadMoreReports()}
+                >
+                  {reportsLoadingMore ? t('common.loading') : t('admin.reports.loadMore')}
+                </button>
+              </div>
+            )}
+          </>
+        )
       ) : tab === 'employers' ? (
         employers === null ? (
           <p className="muted center">{t('common.loading')}</p>
@@ -559,7 +726,7 @@ export function Admin() {
                 <div className="admin-row-meta">
                   <span className="chip">{t(`categories.${g.category}`)}</span>
                   <span className="chip chip-neigh">{formatNeighborhood(g.neighborhood, t)}</span>
-                  <span>{formatPay(g.payMin, g.payMax, t('common.currency'))}</span>
+                  <span className="pay-value">{formatPay(g.payMin, g.payMax, t('common.currency'))}</span>
                   <span className="status-chip">{t(`admin.status.${g.status}`)}</span>
                   {g.flags > 0 && <span className="flag-chip">🚩 {t('admin.flags', { n: g.flags })}</span>}
                 </div>
