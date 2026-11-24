@@ -1,35 +1,72 @@
 rules_version = '2';
 
 // ===============================================================
-// Assumed Data Model (KHADMA — Oran Pilot)
+// Assumed Data Model (KHADMA — Oran V1.4 Phase 1)
 // ===============================================================
 //
-// Collection: gigs (publicly readable when status == 'active', or by owner/admin; NO PII)
+// Collection: gigs (publicly readable when status == 'active' and not expired on get,
+//   or by verified employer owner / admin; NO PII)
 // Document ID: auto-generated
 // Fields:
 //   - title: string (required, 3..120 chars)
 //   - description: string (required, 0..2000 chars)
 //   - category: string (required, enum of 7 categories)
 //   - listingType: string (optional, 'job' | 'service')
+//   - city: string (optional, locked to 'oran' in V1.4)
+//   - wilayaCode: string (optional, locked to '31' in V1.4)
+//   - contactMethods: list<string> (server-managed via Admin SDK, ['whatsapp' | 'email'])
 //   - payMin: int (required, 0..100000000)
 //   - payMax: int (required, payMin..100000000)
 //   - neighborhood: string (required, enum of 8 Oran neighborhoods)
 //   - posterUid: string (required, == request.auth.uid or 'sample' for admin, immutable)
 //   - flags: int (required, 0 on create, incremented +1 server-side via reportGigListing)
-//   - status: string (required, 'active' | 'hidden' | 'removed')
-//   - verified: bool (required, true for phone posters, false for admin samples)
-//   - isSample: bool (required, false for phone posters, true for admin samples)
+//   - status: string (required, 'active' on client create; server lifecycle: 'pending' | 'active' | 'archived' | 'expired' | 'hidden' | 'removed')
+//   - verified: bool (required, true for verified posters, false for admin samples)
+//   - isSample: bool (required, false for real posters, true for admin samples)
 //   - createdAt: timestamp (required, == request.time on create, immutable)
+//   - updatedAt: timestamp (server-managed via Admin SDK)
+//   - expiresAt: timestamp (server-managed via Admin SDK; enforced on public get)
+//   - moderationReason: string (server-managed via Admin SDK)
 //
 // Collection: gigContacts (private PII — admin-only read; Cloud Function uses Admin SDK)
 // Document ID: {gigId} (1:1 with real /gigs/{gigId} document)
 // Fields:
-//   - posterPhone: string (required, == request.auth.token.phone_number, E.164)
-//   - counterId: string (required, == request.auth.token.phone_number, E.164)
+//   - posterPhone: string (required for V1.3 phone client create, == request.auth.token.phone_number, E.164)
+//   - posterEmail: string (optional, server-managed via Admin SDK for email-contact listings)
+//   - counterId: string (required for V1.3 phone client create, == request.auth.token.phone_number, E.164)
 //   - posterUid: string (required, == request.auth.uid)
 //   - createdAt: timestamp (required, == request.time on create)
 //
-// Collection: phoneCounters
+// Collection: employers (UID-based employer profile & quotas — owner/admin read; Admin SDK write only)
+// Document ID: {uid} (Firebase Auth UID)
+// Fields:
+//   - maxActiveGigs: int (server-managed, default 3 for new employers, 5 for legacy phone employers)
+//   - activeCount: int (server-managed atomic count of active/pending gigs)
+//   - trustLevel: string (server-managed)
+//   - suspended: bool (server-managed)
+//   - legacyPhone: string (optional, server-managed E.164 link)
+//   - defaultContactMethods: list<string> (optional, server-managed)
+//   - createdAt / updatedAt: timestamp (server-managed)
+//
+// Collection: settings (runtime marketplace configuration — admin read only; Admin SDK write only)
+// Document ID: {docId} (e.g. 'marketplace')
+// Fields:
+//   - requirePreApproval: bool (server-managed, default false)
+//   - remoderateMaterialEditsWhenEnabled: bool (server-managed)
+//   - updatedAt: timestamp (server-managed)
+//   - updatedBy: string (server-managed admin UID/email)
+//
+// Collection: auditLogs (server-written moderation/lifecycle audit trail — admin read only; Admin SDK write only)
+// Document ID: auto-generated
+// Fields:
+//   - action: string (server-managed)
+//   - actorUid: string (server-managed)
+//   - targetType: string (server-managed)
+//   - targetId: string (server-managed)
+//   - metadata: map (server-managed)
+//   - createdAt: timestamp (server-managed)
+//
+// Collection: phoneCounters (legacy phone quota counters preserved for V1.3 compatibility)
 // Document ID: E.164 phone number (e.g. +213555123456)
 // Fields:
 //   - count: int (required, 1 on create, monotonic +1 up to 5 for owner; 0..5 for admin)
@@ -79,14 +116,19 @@ service cloud.firestore {
       return signedIn() && request.auth.token.phone_number != null;
     }
 
+    function isVerifiedEmployer() {
+      return (signedIn() && request.auth.token.email_verified == true)
+        || isPhoneUser();
+    }
+
     // ===============================================================
     // Domain Validators
     // ===============================================================
 
     function validGigFields() {
       return request.resource.data.keys().hasOnly([
-          'title', 'description', 'category', 'listingType', 'payMin', 'payMax',
-          'neighborhood', 'posterUid', 'flags',
+          'title', 'description', 'category', 'listingType', 'city', 'wilayaCode',
+          'payMin', 'payMax', 'neighborhood', 'posterUid', 'flags',
           'status', 'verified', 'isSample', 'createdAt'
         ])
         && request.resource.data.title is string
@@ -99,6 +141,12 @@ service cloud.firestore {
         && (!('listingType' in request.resource.data)
             || (request.resource.data.listingType is string
                 && request.resource.data.listingType in ['job', 'service']))
+        && (!('city' in request.resource.data)
+            || (request.resource.data.city is string
+                && request.resource.data.city == 'oran'))
+        && (!('wilayaCode' in request.resource.data)
+            || (request.resource.data.wilayaCode is string
+                && request.resource.data.wilayaCode == '31'))
         && request.resource.data.neighborhood in
           ['Bir El Djir', 'Es Sénia', 'Canastel', 'Maraval', 'Gambetta',
            'El Hamri', 'Ain El Turk', 'Wahran El Jadida']
@@ -130,12 +178,22 @@ service cloud.firestore {
     // ===============================================================
 
     match /gigs/{gigId} {
-      // Only active gigs are publicly browsable; hidden/removed gigs are readable
-      // only by the phone-verified poster (owner) or admin.
-      // Phone PII is NOT stored here — it lives exclusively in private /gigContacts/{gigId}.
-      allow read: if resource.data.status == 'active'
+      // Public get enforces active status and non-expiration (allowing legacy V1.3 docs
+      // without expiresAt); owners (verified email or phone) and admin may read all
+      // lifecycle states (pending, active, archived, expired, hidden, removed).
+      // Private contact PII is NOT stored here — it lives exclusively in /gigContacts/{gigId}.
+      allow get: if (resource.data.status == 'active'
+          && (!('expiresAt' in resource.data) || resource.data.expiresAt > request.time))
         || isAdmin()
-        || (isPhoneUser()
+        || (isVerifiedEmployer()
+            && request.auth.uid != 'sample'
+            && resource.data.posterUid == request.auth.uid);
+
+      // Public list preserves V1.3 query compatibility (where('status', '==', 'active'));
+      // server-side expiration transitions expired ads to status 'expired'.
+      allow list: if resource.data.status == 'active'
+        || isAdmin()
+        || (isVerifiedEmployer()
             && request.auth.uid != 'sample'
             && resource.data.posterUid == request.auth.uid);
 
@@ -225,6 +283,27 @@ service cloud.firestore {
     match /reportRateLimits/{limitId} {
       // Server-only IP report rate-limiting buckets managed exclusively by Cloud Functions Admin SDK.
       allow read, write: if false;
+    }
+
+    match /employers/{uid} {
+      // UID-based employer quota, trustLevel, suspension, and default contact preferences.
+      // Readable only by the owning user or admin; writable exclusively via Admin SDK.
+      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
+      allow write: if false;
+    }
+
+    match /settings/{docId} {
+      // Runtime marketplace moderation settings (e.g., settings/marketplace).
+      // Readable only by admin; writable exclusively via Admin SDK Cloud Functions.
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /auditLogs/{logId} {
+      // Server-written moderation and lifecycle audit trail.
+      // Readable only by admin; writable exclusively via Admin SDK.
+      allow read: if isAdmin();
+      allow write: if false;
     }
   }
 }

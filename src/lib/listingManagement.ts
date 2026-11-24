@@ -11,8 +11,11 @@ export interface OwnedListingsSummary {
 
 const STATUS_ORDER: Record<GigStatus, number> = {
   active: 0,
-  hidden: 1,
-  removed: 2
+  pending: 1,
+  hidden: 2,
+  expired: 3,
+  archived: 4,
+  removed: 5
 };
 
 export function summarizeOwnedListings(gigs: readonly Gig[]): OwnedListingsSummary {
