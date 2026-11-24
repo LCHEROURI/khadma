@@ -841,6 +841,7 @@ test.describe('KHADMA V1.4 — Complete Browser-to-Backend E2E (Auth + Firestore
     // Sign out employer and sign in as verified admin
     await page.goto('/employer');
     await page.getByRole('button', { name: /Se déconnecter/i }).click();
+    await expect(page.getByRole('tab', { name: /Se connecter/i })).toBeVisible({ timeout: 15000 });
     await page.goto('/admin');
     await page.locator('input[type="email"]').fill(ADMIN_EMAIL);
     await page.locator('input[type="password"]').fill('AdminStrong!2026');
