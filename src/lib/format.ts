@@ -1,7 +1,50 @@
 import type { Gig } from './types';
 import { NEIGHBORHOOD_KEYS } from './constants';
+import { mapAuthErrorKey } from './employerAuth';
+import type { Lang } from './strings';
 
 const nf = new Intl.NumberFormat('fr-FR');
+const pluralRulesCache: Partial<Record<Lang, Intl.PluralRules>> = {};
+
+function getPluralRules(lang: Lang): Intl.PluralRules {
+  if (!pluralRulesCache[lang]) {
+    pluralRulesCache[lang] = new Intl.PluralRules(lang === 'ar' ? 'ar' : 'fr');
+  }
+  return pluralRulesCache[lang]!;
+}
+
+/**
+ * Formats a localized listing count with grammatically accurate French and Arabic pluralization.
+ * - French: 0 -> "0 annonce", 1 -> "1 annonce", 2+ -> "N annonces"
+ * - Arabic: Intl.PluralRules('ar') categories (zero / one / two / few / many / other)
+ */
+export function formatListingCount(
+  count: number,
+  lang: Lang,
+  t: (k: string, vars?: Record<string, string | number>) => string
+): string {
+  const safeCount = Math.max(0, Math.floor(Number.isFinite(count) ? count : 0));
+  if (safeCount === 0) return t('browse.resultsZero', { n: 0 });
+  if (lang === 'fr') {
+    if (safeCount === 1) return t('browse.resultsOne', { n: 1 });
+    return t('browse.resultsOther', { n: safeCount });
+  }
+  const category = getPluralRules('ar').select(safeCount);
+  switch (category) {
+    case 'zero':
+      return t('browse.resultsZero', { n: safeCount });
+    case 'one':
+      return t('browse.resultsOne', { n: safeCount });
+    case 'two':
+      return t('browse.resultsTwo', { n: safeCount });
+    case 'few':
+      return t('browse.resultsFew', { n: safeCount });
+    case 'many':
+      return t('browse.resultsMany', { n: safeCount });
+    default:
+      return t('browse.resultsOther', { n: safeCount });
+  }
+}
 
 export function formatPay(min: number, max: number, currency = 'DZD'): string {
   const lo = nf.format(min);
@@ -46,6 +89,6 @@ export function errKey(code: string): string {
     case 'auth/invalid-app-credential':
       return 'auth.recaptchaError';
     default:
-      return 'common.error';
+      return mapAuthErrorKey(code);
   }
 }

@@ -6,8 +6,10 @@ export default defineConfig({
     include: [
       'tests/unit/**/*.test.ts',
       'tests/security/**/*.test.ts',
-      'tests/rules/**/*.test.ts'
+      'tests/rules/**/*.test.ts',
+      'tests/auth/**/*.test.ts',
+      'tests/integration/**/*.test.ts'
     ],
-    testTimeout: 20000
+    testTimeout: 30000
   }
 });

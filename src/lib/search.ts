@@ -1,4 +1,5 @@
 import { filterGigsByMode, type BrowseMode } from './listingType';
+import { isGigExpired } from './expiration';
 import type { Gig } from './types';
 
 export interface ListingFilterCriteria {
@@ -38,13 +39,18 @@ export function countActiveFilters(criteria: Omit<ListingFilterCriteria, 'mode'>
  * filtering by category, neighborhood, and normalized multi-token text search
  * over title, description, and neighborhood.
  */
-export function filterListings(gigs: readonly Gig[], criteria: ListingFilterCriteria): Gig[] {
+export function filterListings(
+  gigs: readonly Gig[],
+  criteria: ListingFilterCriteria,
+  nowMs = Date.now()
+): Gig[] {
   const modeGigs = filterGigsByMode(gigs, criteria.mode);
   const tokens = normalizeSearchText(criteria.query ?? '')
     .split(' ')
     .filter(Boolean);
 
   return modeGigs.filter((g) => {
+    if (isGigExpired(g, nowMs)) return false;
     if (criteria.category && g.category !== criteria.category) return false;
     if (criteria.neighborhood && g.neighborhood !== criteria.neighborhood) return false;
     if (tokens.length === 0) return true;

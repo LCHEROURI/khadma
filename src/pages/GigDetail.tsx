@@ -3,11 +3,12 @@ import { Link, useParams } from 'react-router-dom';
 import { useLang } from '../lib/i18n';
 import { getGig } from '../lib/db';
 import { formatNeighborhood, formatPay, timeAgo } from '../lib/format';
+import { isGigExpired } from '../lib/expiration';
 import { isSaved, toggleSaved } from '../lib/db';
 import type { Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
+import { ContactButtons } from '../components/ContactButtons';
 import { ReportSheet } from '../components/ReportSheet';
-import { WhatsAppButton } from '../components/WhatsAppButton';
 import { Icon } from '../components/Icon';
 
 export function GigDetail() {
@@ -18,18 +19,33 @@ export function GigDetail() {
   const [saved, setSaved] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [justPosted, setJustPosted] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!id) return;
+    let active = true;
+    setMissing(false);
+    setGig(null);
     getGig(id)
       .then((g) => {
+        if (!active) return;
         if (!g) setMissing(true);
         else {
           setGig(g);
           setSaved(isSaved(g.id));
         }
       })
-      .catch(() => setMissing(true));
+      .catch(() => {
+        if (active) setMissing(true);
+      });
+    return () => {
+      active = false;
+    };
   }, [id]);
 
   useEffect(() => {
@@ -61,6 +77,8 @@ export function GigDetail() {
 
   const hidden = gig.status === 'hidden';
   const removed = gig.status === 'removed';
+  const expired = gig.status === 'expired' || isGigExpired(gig, nowMs);
+  const canContact = gig.status === 'active' && !expired;
 
   return (
     <div className="page">
@@ -93,12 +111,13 @@ export function GigDetail() {
 
         {hidden && <div className="status-note">{t('detail.statusHiddenNote')}</div>}
         {removed && <div className="status-note">{t('detail.statusRemovedNote')}</div>}
+        {expired && <div className="status-note">{t('detail.statusExpiredNote')}</div>}
         {gig.isSample && <div className="status-note sample-note">{t('detail.sampleNote')}</div>}
 
         {gig.isSample ? (
           <p className="muted">{t('gig.whatsappSampleNote')}</p>
-        ) : gig.status === 'active' ? (
-          <WhatsAppButton gigId={gig.id} />
+        ) : canContact ? (
+          <ContactButtons gigId={gig.id} contactMethods={gig.contactMethods} />
         ) : null}
 
         <div className="detail-actions">
@@ -109,7 +128,7 @@ export function GigDetail() {
             <Icon name="bookmark" size={18} />
             {saved ? t('gig.saved') : t('gig.save')}
           </button>
-          {gig.status === 'active' && (
+          {canContact && (
             <button className="btn btn-ghost" onClick={() => setReporting(true)}>
               <Icon name="flag" size={18} />
               {t('gig.report')}

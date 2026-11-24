@@ -16,9 +16,20 @@ import {
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
-import { auth, db, functions } from '../firebase';
-import type { Gig, GigStatus, ListingType, ReportReason } from './types';
+import { auth, db, ensureAppCheckInitialized, functions } from '../firebase';
+import type {
+  AuditLogEntry,
+  ContactMethod,
+  EmployerProfile,
+  Gig,
+  GigStatus,
+  ListingType,
+  MarketplaceModerationSettings,
+  ReportReason
+} from './types';
+import { isSafeContactUrl } from './contactLink';
 import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
+import { buildBrowseCacheKey, publicBrowseCache } from './browseCache';
 import { SAMPLE_GIGS } from './samples';
 import { readStringList, writeStringList } from './storage';
 
@@ -34,45 +45,82 @@ export class AlreadyReportedError extends Error {
   }
 }
 
-// ---------- Browse ----------
+// ---------- Browse (Bounded 2-Min Public Session Cache) ----------
+
+export function invalidatePublicBrowseCache(gigId?: string): void {
+  publicBrowseCache.invalidate(gigId);
+}
+
+export interface ActiveGigsPageOptions {
+  bypassCache?: boolean;
+  mode?: string;
+  category?: string;
+  neighborhood?: string;
+}
 
 export async function getActiveGigsPage(
   after: QueryDocumentSnapshot<DocumentData> | null = null,
-  pageSize = BROWSE_PAGE_SIZE
+  pageSize = BROWSE_PAGE_SIZE,
+  options: ActiveGigsPageOptions = {}
 ): Promise<{ gigs: Gig[]; lastDoc: QueryDocumentSnapshot<DocumentData> | null; hasMore: boolean }> {
-  const q = after
-    ? query(
-        collection(db, 'gigs'),
-        where('status', '==', 'active'),
-        orderBy('createdAt', 'desc'),
-        startAfter(after),
-        limit(pageSize)
-      )
-    : query(
-        collection(db, 'gigs'),
-        where('status', '==', 'active'),
-        orderBy('createdAt', 'desc'),
-        limit(pageSize)
-      );
-  const snap = await getDocs(q);
-  const gigs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
-  const hasMore = snap.docs.length === pageSize;
-  return {
-    gigs,
-    lastDoc: hasMore ? snap.docs[snap.docs.length - 1] : null,
-    hasMore
-  };
+  const key = buildBrowseCacheKey({
+    mode: options.mode,
+    category: options.category,
+    neighborhood: options.neighborhood,
+    cursorId: after?.id ?? null,
+    pageSize
+  });
+
+  return publicBrowseCache.getOrFetchPage(
+    key,
+    async () => {
+      const q = after
+        ? query(
+            collection(db, 'gigs'),
+            where('status', '==', 'active'),
+            orderBy('createdAt', 'desc'),
+            startAfter(after),
+            limit(pageSize)
+          )
+        : query(
+            collection(db, 'gigs'),
+            where('status', '==', 'active'),
+            orderBy('createdAt', 'desc'),
+            limit(pageSize)
+          );
+      const snap = await getDocs(q);
+      const gigs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+      const hasMore = snap.docs.length === pageSize;
+      return {
+        gigs,
+        lastDoc: hasMore ? snap.docs[snap.docs.length - 1] : null,
+        hasMore
+      };
+    },
+    { bypassCache: options.bypassCache }
+  ) as Promise<{
+    gigs: Gig[];
+    lastDoc: QueryDocumentSnapshot<DocumentData> | null;
+    hasMore: boolean;
+  }>;
 }
 
-export async function getGig(id: string): Promise<Gig | null> {
-  const snap = await getDoc(doc(db, 'gigs', id));
-  if (!snap.exists()) return null;
-  return { id: snap.id, ...snap.data() } as Gig;
+export async function getGig(id: string, options: { bypassCache?: boolean } = {}): Promise<Gig | null> {
+  return publicBrowseCache.getOrFetchPublicGig(
+    id,
+    async () => {
+      const snap = await getDoc(doc(db, 'gigs', id));
+      if (!snap.exists()) return null;
+      return { id: snap.id, ...snap.data() } as Gig;
+    },
+    { bypassCache: options.bypassCache }
+  );
 }
 
 export async function getGigsByIds(ids: string[]): Promise<Gig[]> {
+  const uniqueIds = Array.from(new Set(ids)).slice(0, 60);
   const results = await Promise.all(
-    ids.slice(0, 60).map((id) => getGig(id).catch(() => null))
+    uniqueIds.map((id) => getGig(id).catch(() => null))
   );
   return results.filter((g): g is Gig => g !== null);
 }
@@ -142,21 +190,106 @@ export async function getRemainingForPhone(phone: string): Promise<number> {
   return Math.max(0, MAX_ACTIVE_GIGS - (snap.data().count as number));
 }
 
-// ---------- Contact (App Check + Auth + Server-Side Rate Limit) ----------
+export async function getEmployerProfile(uid: string): Promise<EmployerProfile | null> {
+  const snap = await getDoc(doc(db, 'employers', uid));
+  if (!snap.exists()) return null;
+  return { uid: snap.id, ...snap.data() } as EmployerProfile;
+}
 
-export async function requestGigContactLink(gigId: string, lang: string): Promise<string> {
-  if (!auth.currentUser) {
-    await signInAnonymously(auth);
-  }
-  if (!auth.currentUser) throw new Error('NO_AUTH');
+export interface ManageListingResult {
+  gigId: string;
+  status: GigStatus;
+  expiresAtMs: number | null;
+  quotaUsed: number;
+  quotaMax: number;
+  idempotentReplay?: boolean;
+}
 
-  const call = httpsCallable<{ gigId: string; lang: string }, { waUrl: string }>(
+export async function callManageEmployerListing(
+  payload: Record<string, unknown>
+): Promise<ManageListingResult> {
+  ensureAppCheckInitialized();
+  const call = httpsCallable<Record<string, unknown>, ManageListingResult>(
     functions,
-    'getGigContactLink'
+    'manageEmployerListing'
   );
-  const res = await call({ gigId, lang });
-  if (!res.data?.waUrl) throw new Error('NO_CONTACT');
-  return res.data.waUrl;
+  const res = await call(payload);
+  invalidatePublicBrowseCache(res.data?.gigId);
+  return res.data;
+}
+
+export interface AdminMutationResponse {
+  ok: true;
+  action: string;
+  targetId: string;
+  status?: GigStatus;
+  requirePreApproval?: boolean;
+  remoderateMaterialEdits?: boolean;
+  hiddenActiveCount?: number;
+}
+
+export async function callAdminManageMarketplace(
+  payload: Record<string, unknown>
+): Promise<AdminMutationResponse> {
+  ensureAppCheckInitialized();
+  const call = httpsCallable<Record<string, unknown>, AdminMutationResponse>(
+    functions,
+    'adminManageMarketplace'
+  );
+  const res = await call(payload);
+  invalidatePublicBrowseCache(typeof payload.gigId === 'string' ? payload.gigId : undefined);
+  return res.data;
+}
+
+export async function getMarketplaceModerationSettings(): Promise<MarketplaceModerationSettings | null> {
+  const snap = await getDoc(doc(db, 'settings', 'marketplace'));
+  if (!snap.exists()) return null;
+  return snap.data() as MarketplaceModerationSettings;
+}
+
+export async function getAdminPendingGigs(): Promise<Gig[]> {
+  const q = query(
+    collection(db, 'gigs'),
+    where('status', '==', 'pending'),
+    orderBy('createdAt', 'desc'),
+    limit(ADMIN_QUEUE_LIMIT)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Gig);
+}
+
+export async function getAdminEmployers(): Promise<EmployerProfile[]> {
+  const q = query(collection(db, 'employers'), limit(50));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() }) as EmployerProfile);
+}
+
+export async function getAdminAuditLogs(): Promise<AuditLogEntry[]> {
+  const q = query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(50));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AuditLogEntry);
+}
+
+// ---------- Contact (Account-Free + App Check + Server-Side IP/Listing Rate Limit) ----------
+
+export async function requestGigContactLink(
+  gigId: string,
+  lang: string,
+  channel: ContactMethod = 'whatsapp'
+): Promise<string> {
+  // V1.4 Decision 2 (Option A): genuinely account-free contact retrieval (no auth required).
+  ensureAppCheckInitialized();
+  const call = httpsCallable<
+    { gigId: string; channel: ContactMethod; lang: string },
+    { url?: string; waUrl?: string; mailtoUrl?: string; channel?: ContactMethod }
+  >(functions, 'getGigContactLink');
+  const res = await call({ gigId, channel, lang });
+  const resolvedUrl =
+    res.data?.url ?? (channel === 'whatsapp' ? res.data?.waUrl : res.data?.mailtoUrl);
+  if (!isSafeContactUrl(resolvedUrl, channel)) {
+    throw new Error('NO_CONTACT');
+  }
+  return resolvedUrl;
 }
 
 // ---------- Report (App Check + Auth + IP-Sybil Protection) ----------
@@ -171,12 +304,14 @@ export async function reportGig(gigId: string, reason: ReportReason): Promise<vo
   }
   if (!auth.currentUser) throw new Error('NO_AUTH');
 
+  ensureAppCheckInitialized();
   const call = httpsCallable<{ gigId: string; reason: ReportReason }, { flags: number; status: string }>(
     functions,
     'reportGigListing'
   );
   try {
     await call({ gigId, reason });
+    invalidatePublicBrowseCache(gigId);
   } catch (err) {
     const code = (err as { code?: string }).code ?? '';
     if (code === 'functions/already-exists') {
@@ -251,9 +386,9 @@ export async function adminRemove(gigId: string): Promise<void> {
 }
 
 export async function hasSamples(): Promise<boolean> {
-  const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(1));
+  const q = query(collection(db, 'gigs'), where('isSample', '==', true), limit(ADMIN_QUEUE_LIMIT));
   const snap = await getDocs(q);
-  return !snap.empty;
+  return snap.docs.some((d) => d.data().status !== 'removed');
 }
 
 const BATCH_LIMIT = 400;

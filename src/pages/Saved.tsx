@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLang } from '../lib/i18n';
 import { getSavedIds, getGigsByIds } from '../lib/db';
+import { filterPubliclyActiveGigs } from '../lib/expiration';
 import type { Gig } from '../lib/types';
 import { GigCard } from '../components/GigCard';
 import { Icon } from '../components/Icon';
@@ -9,15 +10,18 @@ export function Saved() {
   const { t } = useLang();
   const [gigs, setGigs] = useState<Gig[] | null>(null);
 
-  const load = () => {
-    getGigsByIds(getSavedIds()).then((list) => setGigs(list));
-  };
-
   useEffect(() => {
-    load();
-    const h = () => load();
-    window.addEventListener('focus', h);
-    return () => window.removeEventListener('focus', h);
+    let active = true;
+    getGigsByIds(getSavedIds())
+      .then((list) => {
+        if (active) setGigs(filterPubliclyActiveGigs(list));
+      })
+      .catch(() => {
+        if (active) setGigs([]);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (

@@ -105,6 +105,9 @@ describe('KHADMA V1.3 owned listing summary and sorting', () => {
     expect(summarizeOwnedListings(gigs)).toEqual({
       total: 4,
       active: 2,
+      pending: 0,
+      expired: 0,
+      archived: 0,
       hidden: 1,
       removed: 1
     });

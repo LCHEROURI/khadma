@@ -4,7 +4,9 @@ import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { useLang } from '../lib/i18n';
 import { BROWSE_PAGE_SIZE, CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
 import { getActiveGigsPage } from '../lib/db';
-import { formatNeighborhood } from '../lib/format';
+import { BROWSE_CACHE_TTL_MS } from '../lib/browseCache';
+import { formatListingCount, formatNeighborhood } from '../lib/format';
+import { filterPubliclyActiveGigs } from '../lib/expiration';
 import { filterGigsByMode, type BrowseMode } from '../lib/listingType';
 import {
   createBrowsePaginationController,
@@ -28,11 +30,13 @@ const INITIAL_PAGINATION_STATE: BrowsePaginationState<Cursor> = {
 };
 
 export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [pageState, setPageState] = useState<BrowsePaginationState<Cursor>>(INITIAL_PAGINATION_STATE);
   const [searchQuery, setSearchQuery] = useState('');
   const [cat, setCat] = useState('');
   const [neigh, setNeigh] = useState('');
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [refreshing, setRefreshing] = useState(false);
 
   const initialErrRef = useRef(() => t('common.loadError'));
   initialErrRef.current = () => t('common.loadError');
@@ -40,10 +44,38 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
   loadMoreErrRef.current = () => t('browse.loadMoreError');
 
   const controllerRef = useRef<BrowsePaginationController | null>(null);
+  const lastFetchedAtRef = useRef<number>(Date.now());
+
+  useEffect(() => {
+    // Periodically re-evaluate listing expiration while the browser tab stays open
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    // Bounded active-tab revalidation: when user returns to tab after 2-min TTL, revalidate once
+    // without introducing permanent Firestore listeners.
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      setNowMs(now);
+      if (now - lastFetchedAtRef.current >= BROWSE_CACHE_TTL_MS && controllerRef.current) {
+        lastFetchedAtRef.current = now;
+        void controllerRef.current.refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     const controller = createBrowsePaginationController<Cursor>({
-      fetchPage: getActiveGigsPage,
+      fetchPage: (after, pageSize, options) => {
+        lastFetchedAtRef.current = Date.now();
+        return getActiveGigsPage(after, pageSize, {
+          bypassCache: options?.bypassCache,
+          mode
+        });
+      },
       pageSize: BROWSE_PAGE_SIZE,
       getInitialErrorMessage: () => initialErrRef.current(),
       getLoadMoreErrorMessage: () => loadMoreErrRef.current(),
@@ -55,10 +87,21 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
       controller.dispose();
       controllerRef.current = null;
     };
-  }, []);
+  }, [mode]);
 
   const retryInitial = () => {
-    void controllerRef.current?.loadInitial();
+    void controllerRef.current?.loadInitial({ bypassCache: true });
+  };
+
+  const handleRefresh = async () => {
+    if (refreshing || !controllerRef.current) return;
+    setRefreshing(true);
+    setNowMs(Date.now());
+    try {
+      await controllerRef.current.refresh();
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const loadMore = () => {
@@ -72,13 +115,18 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
   };
 
   const { gigs, lastDoc, loading, loadingMore, initialError, loadMoreError } = pageState;
-  const modeGigs = filterGigsByMode(gigs, mode);
-  const filtered = filterListings(gigs, {
-    mode,
-    query: searchQuery,
-    category: cat,
-    neighborhood: neigh
-  });
+  const activeGigs = filterPubliclyActiveGigs(gigs, nowMs);
+  const modeGigs = filterGigsByMode(activeGigs, mode);
+  const filtered = filterListings(
+    activeGigs,
+    {
+      mode,
+      query: searchQuery,
+      category: cat,
+      neighborhood: neigh
+    },
+    nowMs
+  );
   const activeFilterCount = countActiveFilters({
     query: searchQuery,
     category: cat,
@@ -208,8 +256,18 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
         </div>
       )}
 
-      <div className="results-count" role="status" aria-live="polite">
-        {t('browse.results', { n: filtered.length })}
+      <div className="results-bar">
+        <div className="results-count" role="status" aria-live="polite">
+          {formatListingCount(filtered.length, lang, t)}
+        </div>
+        <button
+          type="button"
+          className="link-btn"
+          disabled={loading || refreshing}
+          onClick={() => void handleRefresh()}
+        >
+          {refreshing ? t('common.loading') : t('browse.refresh')}
+        </button>
       </div>
 
       {activeFilterCount > 0 && lastDoc && !loading && (

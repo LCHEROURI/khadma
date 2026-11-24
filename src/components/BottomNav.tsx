@@ -32,7 +32,7 @@ const ITEMS: NavItem[] = [
     to: '/employer',
     icon: 'plus',
     key: 'nav.employer',
-    matches: (p) => p === '/employer' || p === '/employer/post' || p === '/post'
+    matches: (p) => p.startsWith('/employer') || p === '/post'
   },
   {
     to: '/settings',

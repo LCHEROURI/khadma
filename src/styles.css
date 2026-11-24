@@ -1494,3 +1494,321 @@ textarea {
   background: var(--red-soft);
   border: 1px solid var(--red-border);
 }
+
+/* ============================================================
+   KHADMA V1.4 Phase 2: Email Auth & Legacy Account Linking UI
+   ============================================================ */
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.auth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.employer-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.employer-auth-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.legacy-link-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: var(--s-3) 0;
+  border-color: var(--brand-border);
+}
+
+.legacy-link-card h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+
+/* ============================================================
+   KHADMA V1.4 Phase 3: Account-Free Contact Buttons
+   ============================================================ */
+.contact-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: var(--s-3) 0;
+}
+
+.contact-fallback {
+  text-align: center;
+  margin: 0;
+}
+
+.contact-fallback a {
+  color: var(--brand-dark);
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+/* ============================================================
+   KHADMA V1.4 Phase 4: Employer Lifecycle & Admin Moderation
+   ============================================================ */
+.contact-prefs-fieldset {
+  border: 1px solid var(--brand-border);
+  border-radius: var(--r-md);
+  padding: var(--s-3);
+  margin: var(--s-3) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.contact-prefs-fieldset legend {
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  padding: 0 6px;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  font-size: var(--fs-sm);
+  min-height: 36px;
+}
+
+.contact-subfields {
+  padding-inline-start: var(--s-3);
+  border-inline-start: 2px solid var(--brand-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.employer-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.employer-card-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.employer-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--brand-border);
+}
+
+.moderation-toggle-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+
+.status-badge-pending {
+  background: var(--banner-bg);
+  color: var(--banner-ink);
+}
+
+.status-badge-expired,
+.status-badge-archived {
+  background: var(--surface-2, #eef2ef);
+  color: var(--ink-2);
+}
+
+/* Phase 5: Results refresh bar & Admin operational monitoring */
+.tabs {
+  flex-wrap: wrap;
+}
+
+.tabs .tab {
+  flex: 1 1 auto;
+  min-width: fit-content;
+}
+
+.results-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.results-bar .results-count {
+  margin: 0;
+}
+
+.monitoring-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.monitoring-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ============================================================
+   KHADMA V1.4 Phase 6B.1: Branded Auth Action, Contact Sheets &
+   Conservative Desktop Responsive Layout
+   ============================================================ */
+.auth-action-card {
+  max-width: 520px;
+  margin: var(--s-5) auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.auth-action-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-weight: 800;
+  font-size: var(--fs-lg);
+  color: var(--brand-dark);
+}
+
+.auth-action-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.auth-action-body .page-title {
+  margin-bottom: 0;
+}
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 36, 25, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--s-3);
+}
+
+.contact-sheet {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.contact-sheet-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.contact-sheet-body {
+  margin: 0;
+}
+
+.contact-sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.contact-copy-status {
+  margin: 0;
+  text-align: center;
+}
+
+.contact-copy-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.contact-copy-fallback p {
+  margin: 0;
+}
+
+.contact-copy-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--brand-border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+@media (min-width: 768px) {
+  .app {
+    max-width: 960px;
+  }
+
+  .header-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: var(--s-3) var(--s-6);
+  }
+
+  .page {
+    padding: var(--s-6) var(--s-6) var(--s-8);
+  }
+
+  .bottom-nav-inner {
+    max-width: 960px;
+    gap: var(--s-3);
+  }
+
+  .journey-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-4);
+  }
+
+  .card-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-4);
+    align-items: stretch;
+  }
+
+  .detail-card,
+  .post-form,
+  .auth-panel,
+  .employer-auth-wrap,
+  .employer-cta-panel {
+    max-width: 720px;
+    margin-inline: auto;
+  }
+
+  .sheet-backdrop {
+    align-items: center;
+  }
+}

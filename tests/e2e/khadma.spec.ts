@@ -61,30 +61,54 @@ test.describe('KHADMA V1.2 critical mobile user journeys', () => {
     await page.getByRole('link', { name: 'Publier une offre d’emploi' }).click();
     await expect(page).toHaveURL(/\/employer\/post$/);
     await expect(page.locator('.locked-type-row')).toHaveText('Offre d’emploi');
-    await expect(page.locator('.type-switcher')).toHaveCount(0);
+    await expect(page.locator('.type-switcher[role="group"]')).toHaveCount(0);
 
     await page.goto('/services');
     await expect(page.getByRole('heading', { name: 'Services et prestataires' })).toBeVisible();
     await page.goto('/services/post');
     await expect(page.locator('.locked-type-row')).toHaveText('Service');
-    await expect(page.locator('.type-switcher')).toHaveCount(0);
+    await expect(page.locator('.type-switcher[role="group"]')).toHaveCount(0);
 
     await page.goto('/post');
-    await expect(page.locator('.type-switcher')).toBeVisible();
-    await expect(page.locator('.type-pill.active')).toHaveText('Offre d’emploi');
+    await expect(page.locator('.type-switcher[role="group"]')).toBeVisible();
+    await expect(page.locator('.type-switcher[role="group"] .type-pill.active')).toHaveText('Offre d’emploi');
 
     await page.goto('/listings');
     await expect(page.getByRole('heading', { name: 'Toutes les annonces' })).toBeVisible();
   });
 
-  test('shows safety banner and validates Algerian phone input on /employer/post via Enter key', async ({ page }) => {
+  test('shows safety banner and email-first registration (no SMS OTP) on /employer/post in FR and AR', async ({ page }) => {
     await page.goto('/employer/post');
     await expect(page.locator('.banner')).toBeVisible();
-    const phoneInput = page.locator('input[type="tel"]');
-    await expect(phoneInput).toHaveAttribute('dir', 'ltr');
-    await phoneInput.fill('041123456'); // invalid landline
-    await phoneInput.press('Enter');
-    await expect(page.locator('.form-error')).toBeVisible();
+    // Ordinary SMS phone registration must be removed in V1.4 Phase 2
+    await expect(page.locator('input[type="tel"]')).toHaveCount(0);
+
+    const emailInput = page.locator('input[type="email"]');
+    const passInput = page.locator('input[type="password"]');
+    await expect(emailInput).toBeVisible();
+    await expect(emailInput).toHaveAttribute('dir', 'ltr');
+    await expect(passInput).toBeVisible();
+
+    // Invalid email triggers accessible alert via Enter key
+    await emailInput.fill('not-an-email');
+    await passInput.fill('short');
+    await passInput.press('Enter');
+    await expect(page.locator('.form-error[role="alert"]')).toBeVisible();
+
+    // Switch to Login tab and Password Reset view
+    await page.getByRole('tab', { name: 'Se connecter' }).click();
+    await page.getByRole('button', { name: 'Mot de passe oublié ?' }).click();
+    await expect(page.getByRole('heading', { name: 'Réinitialiser le mot de passe' })).toBeVisible();
+
+    // Switch to Arabic RTL and verify zero horizontal overflow on /employer/auth
+    await page.goto('/employer/auth');
+    await page.locator('.lang-toggle').getByRole('button', { name: 'العربية' }).click();
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await expect(page.getByRole('heading', { name: 'حساب صاحب العمل' })).toBeVisible();
+    const hasOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth
+    );
+    expect(hasOverflow).toBe(false);
   });
 
   test('renders saved empty state offline-first and admin login gate when unauthenticated', async ({ page }) => {

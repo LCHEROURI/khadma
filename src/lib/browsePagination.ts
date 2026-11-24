@@ -15,8 +15,16 @@ export interface BrowsePaginationState<TCursor> {
   loadMoreError: string;
 }
 
+export interface FetchPageOptions {
+  bypassCache?: boolean;
+}
+
 export interface BrowsePaginationDeps<TCursor> {
-  fetchPage: (after: TCursor | null, pageSize: number) => Promise<PageResult<TCursor>>;
+  fetchPage: (
+    after: TCursor | null,
+    pageSize: number,
+    options?: FetchPageOptions
+  ) => Promise<PageResult<TCursor>>;
   pageSize: number;
   maxInitialAttempts?: number;
   retryDelayMs?: number;
@@ -26,7 +34,8 @@ export interface BrowsePaginationDeps<TCursor> {
 }
 
 export interface BrowsePaginationController {
-  loadInitial(): Promise<void>;
+  loadInitial(options?: FetchPageOptions): Promise<void>;
+  refresh(): Promise<void>;
   loadMore(): Promise<void>;
   dispose(): void;
 }
@@ -85,13 +94,14 @@ export function createBrowsePaginationController<TCursor>(
     }
   };
 
-  const loadInitial = async (): Promise<void> => {
+  const loadInitial = async (options: FetchPageOptions = {}): Promise<void> => {
     if (!mounted) return;
     clearRetryTimer();
     const seq = ++initialSeq;
     loadingMoreInFlight = false;
+    const preserveExisting = options.bypassCache === true && state.gigs.length > 0;
     emit({
-      loading: true,
+      loading: !preserveExisting,
       loadingMore: false,
       initialError: '',
       loadMoreError: ''
@@ -100,7 +110,7 @@ export function createBrowsePaginationController<TCursor>(
     const attemptLoad = async (attempt: number): Promise<void> => {
       if (!mounted || seq !== initialSeq) return;
       try {
-        const res = await deps.fetchPage(null, deps.pageSize);
+        const res = await deps.fetchPage(null, deps.pageSize, options);
         if (!mounted || seq !== initialSeq) return;
         emit({
           gigs: mergeUniqueGigs([], res.gigs),
@@ -111,7 +121,7 @@ export function createBrowsePaginationController<TCursor>(
         });
       } catch {
         if (!mounted || seq !== initialSeq) return;
-        if (attempt < maxInitialAttempts) {
+        if (!preserveExisting && attempt < maxInitialAttempts) {
           await new Promise<void>((resolve) => {
             retryTimer = setTimeout(() => {
               retryTimer = null;
@@ -119,6 +129,12 @@ export function createBrowsePaginationController<TCursor>(
             }, retryDelayMs);
           });
           await attemptLoad(attempt + 1);
+        } else if (preserveExisting) {
+          // Preserve already-loaded results if an explicit refresh fails
+          emit({
+            loading: false,
+            loadMoreError: deps.getLoadMoreErrorMessage()
+          });
         } else {
           emit({
             loading: false,
@@ -129,6 +145,10 @@ export function createBrowsePaginationController<TCursor>(
     };
 
     await attemptLoad(1);
+  };
+
+  const refresh = async (): Promise<void> => {
+    await loadInitial({ bypassCache: true });
   };
 
   const loadMore = async (): Promise<void> => {
@@ -168,5 +188,5 @@ export function createBrowsePaginationController<TCursor>(
     clearRetryTimer();
   };
 
-  return { loadInitial, loadMore, dispose };
+  return { loadInitial, refresh, loadMore, dispose };
 }

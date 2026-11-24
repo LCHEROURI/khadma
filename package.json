@@ -13,7 +13,10 @@
     "test:unit": "vitest run tests/unit",
     "test:security": "vitest run tests/security",
     "test:rules": "firebase emulators:exec --only firestore --project demo-khadma \"vitest run tests/rules\"",
-    "test:e2e": "playwright test"
+    "test:auth": "firebase emulators:exec --only auth --project demo-khadma \"vitest run tests/auth\"",
+    "test:integration": "firebase emulators:exec --only auth,firestore --project demo-khadma \"vitest run --no-file-parallelism tests/integration\"",
+    "test:e2e": "playwright test",
+    "test:e2e:emulator": "firebase emulators:exec --only auth,firestore,functions --project demo-khadma \"playwright test -c playwright.emulator.config.ts\""
   },
   "dependencies": {
     "firebase": "^11.9.1",

@@ -1,11 +1,17 @@
 import { initializeApp } from 'firebase-admin/app';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import {
   ContactHandlerError,
+  evaluateListingBurstBucket,
   evaluateRateBucket,
+  extractTrustedClientIp,
   handleGetGigContactLink,
+  RATE_TTL_MS,
   type ContactStore,
+  type ListingBurstBucket,
+  type PrivateContactRecord,
   type RateBucket
 } from './contactHandler.js';
 import {
@@ -15,45 +21,176 @@ import {
   ReportHandlerError,
   type ReportStore
 } from './reportHandler.js';
+import {
+  EMPLOYER_ACTIVE_QUERY_LIMIT,
+  handleManageEmployerListing,
+  ListingHandlerError,
+  type AuditRecordInput,
+  type IdempotencyRecord,
+  type ListingStore,
+  type StoredEmployerProfile,
+  type StoredGig,
+  type StoredModerationSettings
+} from './listingHandler.js';
+import { handleAdminManageMarketplace, type AdminStore } from './adminHandler.js';
+import { runExpireStaleGigs, type ExpirationStore } from './expirationHandler.js';
+import {
+  AUDIT_LOGS_COLLECTION,
+  EMPLOYERS_COLLECTION,
+  MARKETPLACE_SETTINGS_DOC_ID,
+  SETTINGS_COLLECTION
+} from './types.js';
 
 initializeApp();
 const db = getFirestore();
+
+const IDEMPOTENCY_COLLECTION = 'listingIdempotency';
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+// N+1 sentinel probe: fetch 51 docs so >50 active/pending ads triggers overflow protection instead of silent truncation
+const EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT = EMPLOYER_ACTIVE_QUERY_LIMIT + 1;
+
+/**
+ * Pure predicate verifying that the runtime is strictly an isolated local `demo-*`
+ * Firebase Functions Emulator (and NEVER deployed Cloud Run / Cloud Functions v2 where K_SERVICE is set).
+ * No client-controlled header or payload can influence this check.
+ */
+export function isDemoEmulatorEnv(env: Record<string, string | undefined> = process.env): boolean {
+  return (
+    env.FUNCTIONS_EMULATOR === 'true' &&
+    typeof env.GCLOUD_PROJECT === 'string' &&
+    env.GCLOUD_PROJECT.startsWith('demo-') &&
+    Boolean(env.FIRESTORE_EMULATOR_HOST)
+  );
+}
+
+const IS_DEMO_EMULATOR = isDemoEmulatorEnv(process.env);
+
+/**
+ * Evaluates App Check attestation for callable requests.
+ * Production always requires a verified `request.app` (in addition to `enforceAppCheck: true`).
+ * Strictly scoped accommodation ONLY for isolated local `demo-*` Firebase Functions Emulator runs.
+ */
+export function resolveHasAppCheck(
+  request: { app?: unknown },
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  if (request.app) return true;
+  return isDemoEmulatorEnv(env);
+}
+
+function toFirestoreTimestamps(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...obj };
+  for (const key of ['createdAt', 'updatedAt', 'expiresAt']) {
+    if (typeof out[key] === 'number') {
+      out[key] = Timestamp.fromMillis(out[key] as number);
+    }
+  }
+  return out;
+}
+
+function writeSanitizedAudit(
+  tx: FirebaseFirestore.Transaction,
+  entry: AuditRecordInput
+): void {
+  const ref = db.collection(AUDIT_LOGS_COLLECTION).doc();
+  tx.set(ref, {
+    actorUid: entry.actorUid,
+    actorRole: entry.actorRole,
+    action: entry.action,
+    targetType: entry.targetType,
+    targetId: entry.targetId,
+    ...(entry.reason ? { reason: entry.reason } : {}),
+    ...(entry.metadata ? { metadata: entry.metadata } : {}),
+    createdAt: Timestamp.fromMillis(entry.nowMs)
+  });
+}
 
 const firestoreStore: ContactStore = {
   async getGig(gigId: string) {
     const snap = await db.collection('gigs').doc(gigId).get();
     return snap.exists ? (snap.data() ?? null) : null;
   },
-  async getContactPhone(gigId: string) {
+  async getContactRecord(gigId: string): Promise<PrivateContactRecord | null> {
     const snap = await db.collection('gigContacts').doc(gigId).get();
-    const phone = snap.exists ? snap.data()?.posterPhone : null;
-    return typeof phone === 'string' ? phone : null;
+    if (!snap.exists) return null;
+    const d = snap.data();
+    return {
+      contactPhone: d?.contactPhone,
+      contactEmail: d?.contactEmail,
+      posterPhone: d?.posterPhone,
+      whatsappConsent: d?.whatsappConsent,
+      emailConsent: d?.emailConsent
+    };
   },
-  async checkAndConsumeRateLimit(bucketKey, gigId, maxPerWindow, windowMs, nowMs) {
+  async checkAndConsumeIpRateLimit(
+    bucketKey,
+    slotKey,
+    maxUniquePerWindow,
+    maxTotalPerWindow,
+    windowMs,
+    nowMs
+  ) {
     const ref = db.collection('contactRateLimits').doc(bucketKey);
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const existing: RateBucket | null = snap.exists
         ? {
             gigIds: Array.isArray(snap.data()?.gigIds) ? (snap.data()?.gigIds as string[]) : [],
+            totalRequests:
+              typeof snap.data()?.totalRequests === 'number'
+                ? (snap.data()?.totalRequests as number)
+                : undefined,
             windowStartMs:
               typeof snap.data()?.windowStartMs === 'number'
                 ? (snap.data()?.windowStartMs as number)
                 : 0
           }
         : null;
-      const { allowed, nextBucket } = evaluateRateBucket(
+      const { allowed, alreadyCounted, nextBucket } = evaluateRateBucket(
         existing,
-        gigId,
+        slotKey,
+        maxUniquePerWindow,
+        windowMs,
+        nowMs,
+        maxTotalPerWindow
+      );
+      if (allowed) {
+        tx.set(ref, {
+          gigIds: nextBucket.gigIds,
+          totalRequests: nextBucket.totalRequests,
+          windowStartMs: nextBucket.windowStartMs,
+          updatedAtMs: nowMs,
+          expireAt: Timestamp.fromMillis(nowMs + RATE_TTL_MS)
+        });
+      }
+      return { allowed, alreadyCounted };
+    });
+  },
+  async checkAndConsumeListingRateLimit(gigId, maxPerWindow, windowMs, nowMs) {
+    const ref = db.collection('contactRateLimits').doc(`gig_${gigId}`);
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const existing: ListingBurstBucket | null = snap.exists
+        ? {
+            count: typeof snap.data()?.count === 'number' ? (snap.data()?.count as number) : 0,
+            windowStartMs:
+              typeof snap.data()?.windowStartMs === 'number'
+                ? (snap.data()?.windowStartMs as number)
+                : 0
+          }
+        : null;
+      const { allowed, nextBucket } = evaluateListingBurstBucket(
+        existing,
         maxPerWindow,
         windowMs,
         nowMs
       );
       if (allowed) {
         tx.set(ref, {
-          gigIds: nextBucket.gigIds,
+          count: nextBucket.count,
           windowStartMs: nextBucket.windowStartMs,
-          updatedAtMs: nowMs
+          updatedAtMs: nowMs,
+          expireAt: Timestamp.fromMillis(nowMs + RATE_TTL_MS)
         });
       }
       return allowed;
@@ -63,27 +200,23 @@ const firestoreStore: ContactStore = {
 
 export const CONTACT_FUNCTION_OPTIONS = {
   region: 'europe-west1',
-  enforceAppCheck: true,
-  maxInstances: 20
+  enforceAppCheck: !IS_DEMO_EMULATOR,
+  maxInstances: 20,
+  timeoutSeconds: 15
 } as const;
 
-/**
- * Authenticated, App-Check-protected, rate-limited WhatsApp contact handoff.
- * Replaces the old public GET /api/contact/:gigId 302 redirect.
- */
 export const getGigContactLink = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
-  const forwarded = request.rawRequest?.headers?.['x-forwarded-for'];
-  const forwardedIp =
-    typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : Array.isArray(forwarded) ? forwarded[0] : null;
-  const clientIp = forwardedIp || request.rawRequest?.ip || null;
+  const clientIp = extractTrustedClientIp(request.rawRequest);
+  const data = (request.data ?? {}) as { gigId?: unknown; channel?: unknown; lang?: unknown };
 
   try {
     return await handleGetGigContactLink(firestoreStore, {
       authUid: request.auth?.uid ?? null,
-      hasAppCheck: Boolean(request.app),
+      hasAppCheck: resolveHasAppCheck(request),
       clientIp,
-      gigId: (request.data as { gigId?: unknown } | null)?.gigId,
-      lang: (request.data as { lang?: unknown } | null)?.lang
+      gigId: data.gigId,
+      channel: data.channel,
+      lang: data.lang
     });
   } catch (err) {
     if (err instanceof ContactHandlerError) {
@@ -137,7 +270,8 @@ const firestoreReportStore: ReportStore = {
         tx.set(ipLimitRef, {
           gigIds: nextBucket.gigIds,
           windowStartMs: nextBucket.windowStartMs,
-          updatedAtMs: nowMs
+          updatedAtMs: nowMs,
+          expireAt: Timestamp.fromMillis(nowMs + RATE_TTL_MS)
         });
       }
 
@@ -158,23 +292,13 @@ const firestoreReportStore: ReportStore = {
   }
 };
 
-/**
- * Authenticated, App-Check-protected, IP-Sybil-resistant gig reporting endpoint (SEC-002).
- */
 export const reportGigListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
-  const forwarded = request.rawRequest?.headers?.['x-forwarded-for'];
-  const forwardedIp =
-    typeof forwarded === 'string'
-      ? forwarded.split(',')[0]?.trim()
-      : Array.isArray(forwarded)
-        ? forwarded[0]
-        : null;
-  const clientIp = forwardedIp || request.rawRequest?.ip || null;
+  const clientIp = extractTrustedClientIp(request.rawRequest);
 
   try {
     return await handleReportGigListing(firestoreReportStore, {
       authUid: request.auth?.uid ?? null,
-      hasAppCheck: Boolean(request.app),
+      hasAppCheck: resolveHasAppCheck(request),
       clientIp,
       gigId: (request.data as { gigId?: unknown } | null)?.gigId,
       reason: (request.data as { reason?: unknown } | null)?.reason
@@ -186,3 +310,250 @@ export const reportGigListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request)
     throw new HttpsError('internal', 'Internal Server Error');
   }
 });
+
+// ---------- Phase 4: Employer Listing Lifecycle ----------
+
+const firestoreListingStore: ListingStore = {
+  runTransaction(fn) {
+    return db.runTransaction(async (tx) => {
+      return fn({
+        async getEmployer(uid) {
+          const snap = await tx.get(db.collection(EMPLOYERS_COLLECTION).doc(uid));
+          return snap.exists ? ({ uid: snap.id, ...snap.data() } as StoredEmployerProfile) : null;
+        },
+        setEmployer(uid, data) {
+          tx.set(
+            db.collection(EMPLOYERS_COLLECTION).doc(uid),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        async getModerationSettings() {
+          const snap = await tx.get(
+            db.collection(SETTINGS_COLLECTION).doc(MARKETPLACE_SETTINGS_DOC_ID)
+          );
+          return snap.exists ? (snap.data() as StoredModerationSettings) : null;
+        },
+        async getGig(gigId) {
+          const snap = await tx.get(db.collection('gigs').doc(gigId));
+          return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
+        },
+        async listEmployerGigs(uid) {
+          const q = db
+            .collection('gigs')
+            .where('posterUid', '==', uid)
+            .where('status', 'in', ['active', 'pending'])
+            .limit(EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT);
+          const snap = await tx.get(q);
+          return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
+        },
+        createGig(data) {
+          const ref = db.collection('gigs').doc();
+          tx.set(ref, toFirestoreTimestamps(data as unknown as Record<string, unknown>));
+          return ref.id;
+        },
+        updateGig(gigId, patch) {
+          tx.update(
+            db.collection('gigs').doc(gigId),
+            toFirestoreTimestamps(patch as unknown as Record<string, unknown>)
+          );
+        },
+        setGigContact(gigId, data) {
+          tx.set(
+            db.collection('gigContacts').doc(gigId),
+            {
+              posterUid: data.posterUid,
+              contactPhone: data.contactPhone,
+              contactEmail: data.contactEmail,
+              whatsappConsent: data.whatsappConsent,
+              emailConsent: data.emailConsent,
+              updatedAt: Timestamp.fromMillis(data.updatedAtMs),
+              ...(data.createdAtMs ? { createdAt: Timestamp.fromMillis(data.createdAtMs) } : {})
+            },
+            { merge: true }
+          );
+        },
+        async getIdempotency(key) {
+          const snap = await tx.get(db.collection(IDEMPOTENCY_COLLECTION).doc(key));
+          return snap.exists ? (snap.data() as IdempotencyRecord) : null;
+        },
+        setIdempotency(key, record, nowMs) {
+          tx.set(db.collection(IDEMPOTENCY_COLLECTION).doc(key), {
+            ...record,
+            expireAt: Timestamp.fromMillis(nowMs + IDEMPOTENCY_TTL_MS)
+          });
+        },
+        writeAuditLog(entry) {
+          writeSanitizedAudit(tx, entry);
+        }
+      });
+    });
+  }
+};
+
+export const manageEmployerListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
+  try {
+    return await handleManageEmployerListing(firestoreListingStore, {
+      authUid: request.auth?.uid ?? null,
+      authEmail: typeof request.auth?.token?.email === 'string' ? request.auth.token.email : null,
+      authEmailVerified: request.auth?.token?.email_verified === true,
+      authPhone:
+        typeof request.auth?.token?.phone_number === 'string'
+          ? request.auth.token.phone_number
+          : null,
+      hasAppCheck: resolveHasAppCheck(request),
+      payload: request.data
+    });
+  } catch (err) {
+    if (err instanceof ListingHandlerError) {
+      throw new HttpsError(err.code, err.message);
+    }
+    throw new HttpsError('internal', 'Internal Server Error');
+  }
+});
+
+// ---------- Phase 4: Administrator Moderation & Quotas ----------
+
+const firestoreAdminStore: AdminStore = {
+  runTransaction(fn) {
+    return db.runTransaction(async (tx) => {
+      return fn({
+        async getGig(gigId) {
+          const snap = await tx.get(db.collection('gigs').doc(gigId));
+          return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
+        },
+        updateGig(gigId, patch) {
+          tx.update(
+            db.collection('gigs').doc(gigId),
+            toFirestoreTimestamps(patch as unknown as Record<string, unknown>)
+          );
+        },
+        async getEmployer(uid) {
+          const snap = await tx.get(db.collection(EMPLOYERS_COLLECTION).doc(uid));
+          return snap.exists ? ({ uid: snap.id, ...snap.data() } as StoredEmployerProfile) : null;
+        },
+        setEmployer(uid, data) {
+          tx.set(
+            db.collection(EMPLOYERS_COLLECTION).doc(uid),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        async listEmployerGigs(uid) {
+          const q = db
+            .collection('gigs')
+            .where('posterUid', '==', uid)
+            .where('status', 'in', ['active', 'pending'])
+            .limit(EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT);
+          const snap = await tx.get(q);
+          return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
+        },
+        async getModerationSettings() {
+          const snap = await tx.get(
+            db.collection(SETTINGS_COLLECTION).doc(MARKETPLACE_SETTINGS_DOC_ID)
+          );
+          return snap.exists ? (snap.data() as StoredModerationSettings) : null;
+        },
+        setModerationSettings(data) {
+          tx.set(
+            db.collection(SETTINGS_COLLECTION).doc(MARKETPLACE_SETTINGS_DOC_ID),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        writeAuditLog(entry) {
+          writeSanitizedAudit(tx, entry);
+        }
+      });
+    });
+  }
+};
+
+export const adminManageMarketplace = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
+  try {
+    return await handleAdminManageMarketplace(firestoreAdminStore, {
+      authUid: request.auth?.uid ?? null,
+      authEmail: typeof request.auth?.token?.email === 'string' ? request.auth.token.email : null,
+      authEmailVerified: request.auth?.token?.email_verified === true,
+      hasAppCheck: resolveHasAppCheck(request),
+      payload: request.data
+    });
+  } catch (err) {
+    if (err instanceof ListingHandlerError) {
+      throw new HttpsError(err.code, err.message);
+    }
+    throw new HttpsError('internal', 'Internal Server Error');
+  }
+});
+
+// ---------- Phase 4: Scheduled Expiration Sweep (Every 6 Hours) ----------
+
+const firestoreExpirationStore: ExpirationStore = {
+  async findStaleActiveGigIds(nowMs, batchSize, afterId) {
+    let q = db
+      .collection('gigs')
+      .where('status', '==', 'active')
+      .where('expiresAt', '<=', Timestamp.fromMillis(nowMs))
+      .orderBy('expiresAt', 'asc')
+      .limit(batchSize);
+    if (afterId) {
+      const cursorSnap = await db.collection('gigs').doc(afterId).get();
+      if (cursorSnap.exists) {
+        q = q.startAfter(cursorSnap);
+      }
+    }
+    const snap = await q.get();
+    return snap.docs.map((d) => d.id);
+  },
+  runTransaction(fn) {
+    return db.runTransaction(async (tx) => {
+      return fn({
+        async getGig(gigId) {
+          const snap = await tx.get(db.collection('gigs').doc(gigId));
+          return snap.exists ? ({ id: snap.id, ...snap.data() } as StoredGig) : null;
+        },
+        updateGig(gigId, patch) {
+          tx.update(
+            db.collection('gigs').doc(gigId),
+            toFirestoreTimestamps(patch as unknown as Record<string, unknown>)
+          );
+        },
+        async getEmployer(uid) {
+          const snap = await tx.get(db.collection(EMPLOYERS_COLLECTION).doc(uid));
+          return snap.exists ? ({ uid: snap.id, ...snap.data() } as StoredEmployerProfile) : null;
+        },
+        setEmployer(uid, data) {
+          tx.set(
+            db.collection(EMPLOYERS_COLLECTION).doc(uid),
+            toFirestoreTimestamps(data as unknown as Record<string, unknown>),
+            { merge: true }
+          );
+        },
+        async listEmployerGigs(uid) {
+          const q = db
+            .collection('gigs')
+            .where('posterUid', '==', uid)
+            .where('status', 'in', ['active', 'pending'])
+            .limit(EMPLOYER_ACTIVE_QUERY_PROBE_LIMIT);
+          const snap = await tx.get(q);
+          return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as StoredGig);
+        },
+        writeAuditLog(entry) {
+          writeSanitizedAudit(tx, entry);
+        }
+      });
+    });
+  }
+};
+
+export const expireStaleGigs = onSchedule(
+  {
+    schedule: 'every 6 hours',
+    region: 'europe-west1',
+    maxInstances: 1,
+    timeoutSeconds: 120
+  },
+  async () => {
+    await runExpireStaleGigs(firestoreExpirationStore);
+  }
+);
