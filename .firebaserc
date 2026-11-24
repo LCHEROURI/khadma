@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "khadma-oran"
+    "staging": "khadma-oran-staging",
+    "production": "khadma-oran"
   }
 }

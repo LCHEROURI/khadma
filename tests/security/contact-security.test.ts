@@ -42,7 +42,8 @@ vi.mock('firebase/functions', () => ({
 vi.mock('../../src/firebase', () => ({
   auth: { currentUser: null },
   db: {},
-  functions: {}
+  functions: {},
+  ensureAppCheckInitialized: () => null
 }));
 
 function createMemoryStore(
@@ -599,8 +600,14 @@ describe('KHADMA V1.4 Phase 3 — Account-Free Contact Security & Regression Sui
       'utf8'
     );
 
-    // 1. Production frontend build can NEVER connect to emulators (`!import.meta.env.PROD`)
-    expect(webFirebaseSrc).toContain('!import.meta.env.PROD && import.meta.env.VITE_USE_EMULATORS === \'true\'');
+    const firebaseConfigSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/lib/firebaseConfig.ts'),
+      'utf8'
+    );
+
+    // 1. Production frontend build can NEVER connect to emulators (`!isProdBuild && env.VITE_USE_EMULATORS === 'true'`)
+    expect(webFirebaseSrc).toContain('resolveFirebaseRuntimeConfig');
+    expect(firebaseConfigSrc).toContain("!isProdBuild && env.VITE_USE_EMULATORS === 'true'");
 
     // 2. Backend emulator accommodation requires FUNCTIONS_EMULATOR=true + demo-* project + FIRESTORE_EMULATOR_HOST
     expect(functionsIndexSrc).toContain("env.FUNCTIONS_EMULATOR === 'true'");

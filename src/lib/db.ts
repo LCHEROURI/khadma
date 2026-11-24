@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
-import { auth, db, functions } from '../firebase';
+import { auth, db, ensureAppCheckInitialized, functions } from '../firebase';
 import type {
   AuditLogEntry,
   ContactMethod,
@@ -208,6 +208,7 @@ export interface ManageListingResult {
 export async function callManageEmployerListing(
   payload: Record<string, unknown>
 ): Promise<ManageListingResult> {
+  ensureAppCheckInitialized();
   const call = httpsCallable<Record<string, unknown>, ManageListingResult>(
     functions,
     'manageEmployerListing'
@@ -230,6 +231,7 @@ export interface AdminMutationResponse {
 export async function callAdminManageMarketplace(
   payload: Record<string, unknown>
 ): Promise<AdminMutationResponse> {
+  ensureAppCheckInitialized();
   const call = httpsCallable<Record<string, unknown>, AdminMutationResponse>(
     functions,
     'adminManageMarketplace'
@@ -276,6 +278,7 @@ export async function requestGigContactLink(
   channel: ContactMethod = 'whatsapp'
 ): Promise<string> {
   // V1.4 Decision 2 (Option A): genuinely account-free contact retrieval (no auth required).
+  ensureAppCheckInitialized();
   const call = httpsCallable<
     { gigId: string; channel: ContactMethod; lang: string },
     { url?: string; waUrl?: string; mailtoUrl?: string; channel?: ContactMethod }
@@ -301,6 +304,7 @@ export async function reportGig(gigId: string, reason: ReportReason): Promise<vo
   }
   if (!auth.currentUser) throw new Error('NO_AUTH');
 
+  ensureAppCheckInitialized();
   const call = httpsCallable<{ gigId: string; reason: ReportReason }, { flags: number; status: string }>(
     functions,
     'reportGigListing'

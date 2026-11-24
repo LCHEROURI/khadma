@@ -4,6 +4,7 @@ import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { useLang } from '../lib/i18n';
 import { BROWSE_PAGE_SIZE, CATEGORIES, NEIGHBORHOODS } from '../lib/constants';
 import { getActiveGigsPage } from '../lib/db';
+import { BROWSE_CACHE_TTL_MS } from '../lib/browseCache';
 import { formatNeighborhood } from '../lib/format';
 import { filterPubliclyActiveGigs } from '../lib/expiration';
 import { filterGigsByMode, type BrowseMode } from '../lib/listingType';
@@ -43,20 +44,38 @@ export function Browse({ mode = 'all' }: { mode?: BrowseMode }) {
   loadMoreErrRef.current = () => t('browse.loadMoreError');
 
   const controllerRef = useRef<BrowsePaginationController | null>(null);
+  const lastFetchedAtRef = useRef<number>(Date.now());
 
   useEffect(() => {
     // Periodically re-evaluate listing expiration while the browser tab stays open
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
+    // Bounded active-tab revalidation: when user returns to tab after 2-min TTL, revalidate once
+    // without introducing permanent Firestore listeners.
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      setNowMs(now);
+      if (now - lastFetchedAtRef.current >= BROWSE_CACHE_TTL_MS && controllerRef.current) {
+        lastFetchedAtRef.current = now;
+        void controllerRef.current.refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {
     const controller = createBrowsePaginationController<Cursor>({
-      fetchPage: (after, pageSize, options) =>
-        getActiveGigsPage(after, pageSize, {
+      fetchPage: (after, pageSize, options) => {
+        lastFetchedAtRef.current = Date.now();
+        return getActiveGigsPage(after, pageSize, {
           bypassCache: options?.bypassCache,
           mode
-        }),
+        });
+      },
       pageSize: BROWSE_PAGE_SIZE,
       getInitialErrorMessage: () => initialErrRef.current(),
       getLoadMoreErrorMessage: () => loadMoreErrRef.current(),
