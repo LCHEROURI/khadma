@@ -383,9 +383,13 @@ export async function getAdminReportsPage(
     const data = d.data();
     const gigId = typeof data.gigId === 'string' ? data.gigId : '';
     const reason = (typeof data.reason === 'string' ? data.reason : 'other') as ReportReason;
+    const rawTs = data.createdAt as { seconds?: unknown; nanoseconds?: unknown } | null | undefined;
     const createdAt =
-      data.createdAt && typeof data.createdAt === 'object' && 'seconds' in data.createdAt
-        ? (data.createdAt as { seconds: number; nanoseconds?: number })
+      rawTs && typeof rawTs === 'object' && typeof rawTs.seconds === 'number'
+        ? {
+            seconds: rawTs.seconds,
+            nanoseconds: typeof rawTs.nanoseconds === 'number' ? rawTs.nanoseconds : 0
+          }
         : null;
     return {
       id: d.id,
