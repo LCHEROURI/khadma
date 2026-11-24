@@ -17,7 +17,8 @@ import {
 import { signInAnonymously } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, db, functions } from '../firebase';
-import type { EmployerProfile, Gig, GigStatus, ListingType, ReportReason } from './types';
+import type { ContactMethod, EmployerProfile, Gig, GigStatus, ListingType, ReportReason } from './types';
+import { isSafeContactUrl } from './contactLink';
 import { ADMIN_QUEUE_LIMIT, BROWSE_PAGE_SIZE, MAX_ACTIVE_GIGS } from './constants';
 import { SAMPLE_GIGS } from './samples';
 import { readStringList, writeStringList } from './storage';
@@ -148,21 +149,25 @@ export async function getEmployerProfile(uid: string): Promise<EmployerProfile |
   return { uid: snap.id, ...snap.data() } as EmployerProfile;
 }
 
-// ---------- Contact (App Check + Auth + Server-Side Rate Limit) ----------
+// ---------- Contact (Account-Free + App Check + Server-Side IP/Listing Rate Limit) ----------
 
-export async function requestGigContactLink(gigId: string, lang: string): Promise<string> {
-  if (!auth.currentUser) {
-    await signInAnonymously(auth);
+export async function requestGigContactLink(
+  gigId: string,
+  lang: string,
+  channel: ContactMethod = 'whatsapp'
+): Promise<string> {
+  // V1.4 Decision 2 (Option A): genuinely account-free contact retrieval (no auth required).
+  const call = httpsCallable<
+    { gigId: string; channel: ContactMethod; lang: string },
+    { url?: string; waUrl?: string; mailtoUrl?: string; channel?: ContactMethod }
+  >(functions, 'getGigContactLink');
+  const res = await call({ gigId, channel, lang });
+  const resolvedUrl =
+    res.data?.url ?? (channel === 'whatsapp' ? res.data?.waUrl : res.data?.mailtoUrl);
+  if (!isSafeContactUrl(resolvedUrl, channel)) {
+    throw new Error('NO_CONTACT');
   }
-  if (!auth.currentUser) throw new Error('NO_AUTH');
-
-  const call = httpsCallable<{ gigId: string; lang: string }, { waUrl: string }>(
-    functions,
-    'getGigContactLink'
-  );
-  const res = await call({ gigId, lang });
-  if (!res.data?.waUrl) throw new Error('NO_CONTACT');
-  return res.data.waUrl;
+  return resolvedUrl;
 }
 
 // ---------- Report (App Check + Auth + IP-Sybil Protection) ----------

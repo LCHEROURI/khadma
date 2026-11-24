@@ -6,8 +6,8 @@ import { formatNeighborhood, formatPay, timeAgo } from '../lib/format';
 import { isSaved, toggleSaved } from '../lib/db';
 import type { Gig } from '../lib/types';
 import { Banner } from '../components/Banner';
+import { ContactButtons } from '../components/ContactButtons';
 import { ReportSheet } from '../components/ReportSheet';
-import { WhatsAppButton } from '../components/WhatsAppButton';
 import { Icon } from '../components/Icon';
 
 export function GigDetail() {
@@ -98,7 +98,7 @@ export function GigDetail() {
         {gig.isSample ? (
           <p className="muted">{t('gig.whatsappSampleNote')}</p>
         ) : gig.status === 'active' ? (
-          <WhatsAppButton gigId={gig.id} />
+          <ContactButtons gigId={gig.id} contactMethods={gig.contactMethods} />
         ) : null}
 
         <div className="detail-actions">

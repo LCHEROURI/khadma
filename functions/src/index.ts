@@ -1,11 +1,16 @@
 import { initializeApp } from 'firebase-admin/app';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   ContactHandlerError,
+  evaluateListingBurstBucket,
   evaluateRateBucket,
+  extractTrustedClientIp,
   handleGetGigContactLink,
+  RATE_TTL_MS,
   type ContactStore,
+  type ListingBurstBucket,
+  type PrivateContactRecord,
   type RateBucket
 } from './contactHandler.js';
 import {
@@ -24,36 +29,87 @@ const firestoreStore: ContactStore = {
     const snap = await db.collection('gigs').doc(gigId).get();
     return snap.exists ? (snap.data() ?? null) : null;
   },
-  async getContactPhone(gigId: string) {
+  async getContactRecord(gigId: string): Promise<PrivateContactRecord | null> {
     const snap = await db.collection('gigContacts').doc(gigId).get();
-    const phone = snap.exists ? snap.data()?.posterPhone : null;
-    return typeof phone === 'string' ? phone : null;
+    if (!snap.exists) return null;
+    const d = snap.data();
+    return {
+      contactPhone: d?.contactPhone,
+      contactEmail: d?.contactEmail,
+      posterPhone: d?.posterPhone,
+      whatsappConsent: d?.whatsappConsent,
+      emailConsent: d?.emailConsent
+    };
   },
-  async checkAndConsumeRateLimit(bucketKey, gigId, maxPerWindow, windowMs, nowMs) {
+  async checkAndConsumeIpRateLimit(
+    bucketKey,
+    slotKey,
+    maxUniquePerWindow,
+    maxTotalPerWindow,
+    windowMs,
+    nowMs
+  ) {
     const ref = db.collection('contactRateLimits').doc(bucketKey);
     return db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const existing: RateBucket | null = snap.exists
         ? {
             gigIds: Array.isArray(snap.data()?.gigIds) ? (snap.data()?.gigIds as string[]) : [],
+            totalRequests:
+              typeof snap.data()?.totalRequests === 'number'
+                ? (snap.data()?.totalRequests as number)
+                : undefined,
             windowStartMs:
               typeof snap.data()?.windowStartMs === 'number'
                 ? (snap.data()?.windowStartMs as number)
                 : 0
           }
         : null;
-      const { allowed, nextBucket } = evaluateRateBucket(
+      const { allowed, alreadyCounted, nextBucket } = evaluateRateBucket(
         existing,
-        gigId,
+        slotKey,
+        maxUniquePerWindow,
+        windowMs,
+        nowMs,
+        maxTotalPerWindow
+      );
+      if (allowed) {
+        tx.set(ref, {
+          gigIds: nextBucket.gigIds,
+          totalRequests: nextBucket.totalRequests,
+          windowStartMs: nextBucket.windowStartMs,
+          updatedAtMs: nowMs,
+          expireAt: Timestamp.fromMillis(nowMs + RATE_TTL_MS)
+        });
+      }
+      return { allowed, alreadyCounted };
+    });
+  },
+  async checkAndConsumeListingRateLimit(gigId, maxPerWindow, windowMs, nowMs) {
+    const ref = db.collection('contactRateLimits').doc(`gig_${gigId}`);
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const existing: ListingBurstBucket | null = snap.exists
+        ? {
+            count: typeof snap.data()?.count === 'number' ? (snap.data()?.count as number) : 0,
+            windowStartMs:
+              typeof snap.data()?.windowStartMs === 'number'
+                ? (snap.data()?.windowStartMs as number)
+                : 0
+          }
+        : null;
+      const { allowed, nextBucket } = evaluateListingBurstBucket(
+        existing,
         maxPerWindow,
         windowMs,
         nowMs
       );
       if (allowed) {
         tx.set(ref, {
-          gigIds: nextBucket.gigIds,
+          count: nextBucket.count,
           windowStartMs: nextBucket.windowStartMs,
-          updatedAtMs: nowMs
+          updatedAtMs: nowMs,
+          expireAt: Timestamp.fromMillis(nowMs + RATE_TTL_MS)
         });
       }
       return allowed;
@@ -64,26 +120,26 @@ const firestoreStore: ContactStore = {
 export const CONTACT_FUNCTION_OPTIONS = {
   region: 'europe-west1',
   enforceAppCheck: true,
-  maxInstances: 20
+  maxInstances: 20,
+  timeoutSeconds: 15
 } as const;
 
 /**
- * Authenticated, App-Check-protected, rate-limited WhatsApp contact handoff.
- * Replaces the old public GET /api/contact/:gigId 302 redirect.
+ * Account-free, App-Check-protected, IP + listing rate-limited WhatsApp & email contact handoff.
+ * Backward-compatible with V1.3 clients (channel defaults to 'whatsapp', response includes waUrl).
  */
 export const getGigContactLink = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
-  const forwarded = request.rawRequest?.headers?.['x-forwarded-for'];
-  const forwardedIp =
-    typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : Array.isArray(forwarded) ? forwarded[0] : null;
-  const clientIp = forwardedIp || request.rawRequest?.ip || null;
+  const clientIp = extractTrustedClientIp(request.rawRequest);
+  const data = (request.data ?? {}) as { gigId?: unknown; channel?: unknown; lang?: unknown };
 
   try {
     return await handleGetGigContactLink(firestoreStore, {
       authUid: request.auth?.uid ?? null,
       hasAppCheck: Boolean(request.app),
       clientIp,
-      gigId: (request.data as { gigId?: unknown } | null)?.gigId,
-      lang: (request.data as { lang?: unknown } | null)?.lang
+      gigId: data.gigId,
+      channel: data.channel,
+      lang: data.lang
     });
   } catch (err) {
     if (err instanceof ContactHandlerError) {
@@ -137,7 +193,8 @@ const firestoreReportStore: ReportStore = {
         tx.set(ipLimitRef, {
           gigIds: nextBucket.gigIds,
           windowStartMs: nextBucket.windowStartMs,
-          updatedAtMs: nowMs
+          updatedAtMs: nowMs,
+          expireAt: Timestamp.fromMillis(nowMs + RATE_TTL_MS)
         });
       }
 
@@ -162,14 +219,7 @@ const firestoreReportStore: ReportStore = {
  * Authenticated, App-Check-protected, IP-Sybil-resistant gig reporting endpoint (SEC-002).
  */
 export const reportGigListing = onCall(CONTACT_FUNCTION_OPTIONS, async (request) => {
-  const forwarded = request.rawRequest?.headers?.['x-forwarded-for'];
-  const forwardedIp =
-    typeof forwarded === 'string'
-      ? forwarded.split(',')[0]?.trim()
-      : Array.isArray(forwarded)
-        ? forwarded[0]
-        : null;
-  const clientIp = forwardedIp || request.rawRequest?.ip || null;
+  const clientIp = extractTrustedClientIp(request.rawRequest);
 
   try {
     return await handleReportGigListing(firestoreReportStore, {

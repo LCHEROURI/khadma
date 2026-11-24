@@ -142,6 +142,12 @@ export function Icon({ name, size = 20, className }: IconProps) {
           <circle cx="12" cy="7" r="4" />
         </>
       )}
+      {name === 'mail' && (
+        <>
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <polyline points="22 6 12 13 2 6" />
+        </>
+      )}
     </svg>
   );
 }

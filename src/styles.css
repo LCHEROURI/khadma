@@ -1534,3 +1534,24 @@ textarea {
   margin: 0;
   font-size: var(--fs-md);
 }
+
+/* ============================================================
+   KHADMA V1.4 Phase 3: Account-Free Contact Buttons
+   ============================================================ */
+.contact-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin: var(--s-3) 0;
+}
+
+.contact-fallback {
+  text-align: center;
+  margin: 0;
+}
+
+.contact-fallback a {
+  color: var(--brand-dark);
+  text-decoration: underline;
+  font-weight: 600;
+}
